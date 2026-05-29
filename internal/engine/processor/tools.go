@@ -54,7 +54,8 @@ func (p *Processor) onToolCall(ctx context.Context, ev llm.Event) {
 	p.updatePart(ctx, part)
 
 	if doom && p.cfg.Asker != nil {
-		if err := p.cfg.Asker.Ask(ctx, "doom_loop", []string{ev.Name}, map[string]any{"tool": ev.Name, "input": input}); err != nil {
+		if err := p.cfg.Asker.AskPermission(ctx, p.cfg.SessionID, "doom_loop", []string{ev.Name},
+			map[string]any{"tool": ev.Name, "input": input}); err != nil {
 			p.failCall(ctx, ev.ID, err.Error())
 		}
 	}

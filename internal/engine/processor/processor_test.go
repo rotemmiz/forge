@@ -40,7 +40,7 @@ func (f fakeExecutor) Execute(_ context.Context, _ ToolCall) (ToolResult, error)
 
 type recordingAsker struct{ calls int }
 
-func (a *recordingAsker) Ask(context.Context, string, []string, map[string]any) error {
+func (a *recordingAsker) AskPermission(context.Context, string, string, []string, map[string]any) error {
 	a.calls++
 	return nil
 }

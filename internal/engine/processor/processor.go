@@ -56,10 +56,10 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCall) (ToolResult, error)
 }
 
-// PermissionAsker is the optional doom-loop hook (wired to the permission
-// manager in M7). A non-nil error aborts the offending tool call.
+// PermissionAsker is the optional doom-loop hook (satisfied by the permission
+// manager). A non-nil error aborts the offending tool call.
 type PermissionAsker interface {
-	Ask(ctx context.Context, permission string, patterns []string, metadata map[string]any) error
+	AskPermission(ctx context.Context, sessionID, permission string, patterns []string, metadata map[string]any) error
 }
 
 // doomLoopThreshold is the count of identical consecutive tool calls that trips

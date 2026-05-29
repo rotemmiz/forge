@@ -20,11 +20,5 @@
     "phase": "A",
     "reason": "GET /provider returns the models.dev catalog (plan 04); not implemented in plan-01 M1/M2",
     "track": "TODO: implement with provider/models loader (plan 04)"
-  },
-  {
-    "scenario": "sse-*",
-    "phase": "A",
-    "reason": "SSE event bus (/event, /global/event) lands in plan-01 M4; M1/M2 cover config + session CRUD only",
-    "track": "TODO: implement in plan-01 M4"
   }
 ]

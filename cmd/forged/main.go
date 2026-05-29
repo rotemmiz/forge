@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/rotemmiz/forge/internal/auth"
+	"github.com/rotemmiz/forge/internal/bus"
+	"github.com/rotemmiz/forge/internal/instance"
 	"github.com/rotemmiz/forge/internal/server"
 	"github.com/rotemmiz/forge/internal/session"
 	"github.com/rotemmiz/forge/internal/storage"
@@ -65,11 +67,14 @@ func run(host string, port int) error {
 	}
 	defer func() { _ = db.Close() }()
 
+	globalBus := bus.NewGlobal()
 	handler, err := server.New(server.Options{
-		Version:  version,
-		Auth:     authCfg,
-		Cwd:      cwd,
-		Sessions: session.NewStore(db),
+		Version:   version,
+		Auth:      authCfg,
+		Cwd:       cwd,
+		Sessions:  session.NewStore(db),
+		Instances: instance.NewManager(globalBus),
+		Global:    globalBus,
 	})
 	if err != nil {
 		return err

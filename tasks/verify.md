@@ -200,3 +200,31 @@ middleware chain; `cmd/forged` opens storage + passes options.
       (URLSearchParams + instance-context `decode`); Forge decodes it once. Only matters for paths
       containing literal `%` sequences. The SDK uses the header path, which Forge handles correctly
       (PathUnescape, no `+`→space).
+
+## Plan-01 M3 (instance routing/cache) & M4 (SSE event bus) — 2026-05-29
+
+Implemented: `internal/bus` (Event{id,type,properties}; per-instance Bus + process Global
+fan-out, non-blocking drop, publish forwards to global wrapped {payload,directory}),
+`internal/instance` (directory→Context cache, get-or-create), `internal/server/sse.go`
+(`GET /event` bare stream, `GET /global/event` {payload}-wrapped stream; server.connected first +
+10s heartbeat; instance stream stops on server.instance.disposed). Wired global bus + manager in
+`cmd/forged`.
+
+- [x] Dual gate GREEN and TIGHTER: `sse-instance-connected` and `sse-global-connected` now match
+      opencode FOR REAL (removed from known-divergences.json) — 0 blocking, and only `provider-list`
+      remains a known-divergence (7 warnings, all provider-list). 9 of 10 scenarios genuinely green.
+      (automated)
+- [x] SSE shapes verified against opencode source (handlers/event.ts, handlers/global.ts) and the
+      recorded cassette: instance `/event` = bare `{id,type,properties}`; global `/global/event` =
+      `{payload:{id,type,properties}}`; SSE event name `message`; headers Cache-Control
+      `no-cache, no-transform`, X-Accel-Buffering `no`, X-Content-Type-Options `nosniff`. (automated)
+- [x] CI-mimic GREEN: build/vet/gofmt/golangci-lint(0)/`go test ./...`(incl. new bus + SSE handler
+      tests)/`make gen`+gen-diff/self-diff. (automated)
+- [ ] EYEBALL: instance event subscribes to the bus BEFORE writing server.connected (closes the
+      subscribe-before-publish race, handlers/event.ts:23-27); slow subscribers drop (256-buffer,
+      non-blocking publish) rather than stalling the bus. Confirm this is acceptable.
+- [ ] NOTED: instance cache (`internal/instance`) currently creates a bus-only Context with a
+      simple mutexed get-or-create (init is trivial). The plan's full single-flight (Deferred-style
+      ready-channel) + dispose/`server.instance.disposed` emission land when init grows
+      (config/LSP/PTY) or instances are torn down — heartbeat + dispose-termination are wired in the
+      stream but no disposal is triggered yet (no TTL; matches opencode keeping instances for life).

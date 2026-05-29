@@ -22,7 +22,9 @@ import (
 
 	"github.com/rotemmiz/forge/internal/api/spec"
 	"github.com/rotemmiz/forge/internal/auth"
+	"github.com/rotemmiz/forge/internal/bus"
 	"github.com/rotemmiz/forge/internal/config"
+	"github.com/rotemmiz/forge/internal/instance"
 	"github.com/rotemmiz/forge/internal/session"
 )
 
@@ -37,6 +39,10 @@ type Options struct {
 	Cwd string
 	// Sessions is the session store backing the /session endpoints (M2).
 	Sessions *session.Store
+	// Instances is the per-directory instance cache backing /event (M3/M4).
+	Instances *instance.Manager
+	// Global is the process-global event bus backing /global/event (M4).
+	Global *bus.Global
 }
 
 // New builds the daemon's HTTP handler.
@@ -64,6 +70,12 @@ func New(opts Options) (http.Handler, error) {
 
 	if opts.Sessions != nil {
 		registerSessionRoutes(reg, opts.Sessions)
+	}
+	if opts.Instances != nil {
+		reg(http.MethodGet, "/event", instanceEventHandler(opts.Instances))
+	}
+	if opts.Global != nil {
+		reg(http.MethodGet, "/global/event", globalEventHandler(opts.Global))
 	}
 
 	ops, err := spec.Operations()

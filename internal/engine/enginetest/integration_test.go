@@ -111,6 +111,63 @@ func countType(events []bus.Event, typ string) int {
 	return n
 }
 
+// summarize renders SSE events compactly, annotating deltas with their text.
+func summarize(events []bus.Event) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		s := strings.TrimPrefix(e.Type, "message.")
+		if e.Type == "message.part.delta" {
+			if props, ok := e.Properties.(map[string]any); ok {
+				s += "(" + asString(props["delta"]) + ")"
+			}
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func asString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// roles renders a model-message list as role(content-kinds).
+func roles(msgs []llm.ModelMessage) string {
+	var parts []string
+	for _, m := range msgs {
+		var kinds []string
+		for _, c := range m.Content {
+			kinds = append(kinds, string(c.Kind))
+		}
+		parts = append(parts, string(m.Role)+"["+strings.Join(kinds, ",")+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
+// dumpConversation logs each persisted message and its parts.
+func dumpConversation(t *testing.T, msgs []message.WithParts) {
+	t.Helper()
+	for _, m := range msgs {
+		t.Logf("  %s message %s:", m.Info.Role(), m.Info.ID())
+		for _, p := range m.Parts {
+			switch v := p.(type) {
+			case *message.TextPart:
+				t.Logf("    text: %q", v.Text)
+			case *message.ToolPart:
+				t.Logf("    tool %s (callID=%s) status=%s", v.Tool, v.CallID, v.Status())
+			case *message.StepStartPart:
+				t.Logf("    step-start")
+			case *message.StepFinishPart:
+				t.Logf("    step-finish reason=%s cost=%.6f tokens(in=%v out=%v)", v.Reason, v.Cost, v.Tokens.Input, v.Tokens.Output)
+			default:
+				t.Logf("    %T", p)
+			}
+		}
+	}
+}
+
 // Scenario 1: a single text prompt produces a streamed text response.
 func TestE2E_TextOnly(t *testing.T) {
 	script := NewScript().StepStart().Text("t1", "Hello", ", world").
@@ -134,6 +191,9 @@ func TestE2E_TextOnly(t *testing.T) {
 	}
 
 	events := r.drain()
+	t.Logf("assistant text: %q  (finish=%s, tokens in=%v out=%v)",
+		text, out.Info.Assistant.Finish, out.Info.Assistant.Tokens.Input, out.Info.Assistant.Tokens.Output)
+	t.Logf("SSE sequence (%d events): %s", len(events), strings.Join(summarize(events), " → "))
 	// User message, assistant placeholder, streamed deltas, and a final message.updated.
 	if countType(events, "message.part.delta") != 2 {
 		t.Fatalf("want 2 part.delta, got %d (%v)", countType(events, "message.part.delta"), eventTypes(events))
@@ -150,6 +210,7 @@ func TestE2E_TextOnly(t *testing.T) {
 	if len(msgs) != 2 || !msgs[0].Info.IsUser() || msgs[1].Info.Assistant == nil {
 		t.Fatalf("want [user, assistant] persisted, got %d messages", len(msgs))
 	}
+	dumpConversation(t, msgs)
 	if r.mock.Calls() != 1 {
 		t.Fatalf("want 1 provider call, got %d", r.mock.Calls())
 	}
@@ -167,6 +228,8 @@ func TestE2E_ToolCall(t *testing.T) {
 
 	r := newRigInDir(t, dir, step1, step2)
 	out := r.prompt(t, "write out.txt")
+
+	t.Logf("SSE sequence: %s", strings.Join(summarize(r.drain()), " → "))
 
 	if out.Info.Assistant == nil || out.Info.Assistant.Finish != "stop" {
 		t.Fatalf("final assistant should finish stop: %+v", out.Info.Assistant)
@@ -188,6 +251,8 @@ func TestE2E_ToolCall(t *testing.T) {
 	if !sawCompletedTool {
 		t.Fatalf("no completed write tool part found")
 	}
+	t.Logf("provider calls: %d", r.mock.Calls())
+	dumpConversation(t, msgs)
 	// The second provider request must include the tool result in its messages.
 	reqs := r.mock.Requests()
 	if len(reqs) != 2 {
@@ -196,6 +261,7 @@ func TestE2E_ToolCall(t *testing.T) {
 	if !hasToolResult(reqs[1].Messages) {
 		t.Fatalf("second request missing tool-result message: %+v", reqs[1].Messages)
 	}
+	t.Logf("2nd request messages (tool result fed back): %s", roles(reqs[1].Messages))
 	// And the file was actually written by the tool.
 	if data, err := readFile(dir, "out.txt"); err != nil || strings.TrimSpace(data) != "done" {
 		t.Fatalf("tool did not write file: %q err=%v", data, err)

@@ -5,7 +5,10 @@ go 1.26.3
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 require (
+	github.com/coder/websocket v1.8.14
+	github.com/creack/pty v1.1.24
 	github.com/go-chi/chi/v5 v5.3.0
+	github.com/grandcat/zeroconf v1.0.0
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	modernc.org/sqlite v1.51.0
@@ -14,15 +17,12 @@ require (
 require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
-	github.com/coder/websocket v1.8.14 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/getkin/kin-openapi v0.135.0 // indirect
 	github.com/go-openapi/jsonpointer v0.22.4 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/grandcat/zeroconf v1.0.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

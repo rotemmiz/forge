@@ -1,9 +1,10 @@
 // Command forged is the Forge daemon: a ground-up, interop-first alternative
 // to opencode that is wire-compatible with its HTTP+SSE+WebSocket API.
 //
-// The S4 skeleton serves GET /global/health and GET /doc and returns 501 for
-// every other documented operation — just enough to be a conformance dual-run
-// target. Transport/state/auth/routing (M1–M7) is plan 01.
+// It serves GET /global/health, GET /doc, GET /config (M1), and session CRUD
+// (M2), with the opencode-compatible auth + directory middleware chain; every
+// other documented operation still returns a structured 501 until the remaining
+// plan-01 milestones land.
 package main
 
 import (
@@ -20,7 +21,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rotemmiz/forge/internal/auth"
 	"github.com/rotemmiz/forge/internal/server"
+	"github.com/rotemmiz/forge/internal/session"
+	"github.com/rotemmiz/forge/internal/storage"
 )
 
 // version is the daemon version, overridable at build time via
@@ -44,7 +48,29 @@ func main() {
 }
 
 func run(host string, port int) error {
-	handler, err := server.New(server.Options{Version: version})
+	authCfg := auth.FromEnv()
+	if !authCfg.Required() {
+		// opencode warns when the server is unsecured (cli/cmd/serve.ts:15).
+		log.Printf("warning: OPENCODE_SERVER_PASSWORD is not set; server is unauthenticated")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+
+	db, err := storage.Open(storage.DefaultPath())
+	if err != nil {
+		return fmt.Errorf("open storage: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	handler, err := server.New(server.Options{
+		Version:  version,
+		Auth:     authCfg,
+		Cwd:      cwd,
+		Sessions: session.NewStore(db),
+	})
 	if err != nil {
 		return err
 	}

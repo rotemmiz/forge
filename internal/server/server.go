@@ -1,15 +1,17 @@
 // Package server hosts the HTTP transport for the Forge daemon.
 //
-// This S4 skeleton wires just enough to be a conformance dual-run target:
-//   - GET /global/health -> {healthy:true, version} (handlers/global.ts:76)
-//   - GET /doc           -> the embedded OpenAPI reference, matching opencode's
-//     spec endpoint (server/routes/instance/httpapi/server.ts:162-167). Note:
-//     opencode serves the live spec at /doc, NOT /openapi.json.
-//   - every other documented operation -> 501 Not Implemented (a Forge Phase-A
-//     placeholder; opencode never returns 501, so this is an expected
-//     conformance divergence until plan 01/02 implement the real handlers).
+// It wires the opencode-compatible middleware chain (auth → directory) and the
+// real endpoints implemented so far, falling back to a structured 501 for every
+// other documented operation (a Forge Phase-A placeholder; opencode never
+// returns 501, so this is an expected conformance divergence until the
+// remaining plan-01 milestones implement the handlers).
 //
-// The middleware chain, SSE writer, PTY upgrade, auth, and routing land in plan 01.
+// Real endpoints:
+//   - GET /global/health -> {healthy:true, version} (handlers/global.ts:76)
+//   - GET /doc (+ /openapi.json alias) -> embedded OpenAPI reference
+//     (server/routes/instance/httpapi/server.ts:162-167)
+//   - GET /config -> merged opencode-format config (M1)
+//   - session CRUD (M2): see session_handlers.go
 package server
 
 import (
@@ -19,29 +21,49 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rotemmiz/forge/internal/api/spec"
+	"github.com/rotemmiz/forge/internal/auth"
+	"github.com/rotemmiz/forge/internal/config"
+	"github.com/rotemmiz/forge/internal/session"
 )
 
-// Options configures the daemon HTTP handler. Version is reported by
-// GET /global/health.
+// Options configures the daemon HTTP handler.
 type Options struct {
+	// Version is reported by GET /global/health.
 	Version string
+	// Auth holds the resolved Basic-auth settings (pass-through when no password).
+	Auth auth.Config
+	// Cwd is the daemon's startup working directory, used as the directory
+	// fallback when a request carries neither ?directory nor x-opencode-directory.
+	Cwd string
+	// Sessions is the session store backing the /session endpoints (M2).
+	Sessions *session.Store
 }
 
 // New builds the daemon's HTTP handler.
 func New(opts Options) (http.Handler, error) {
 	r := chi.NewRouter()
 
+	// Middleware chain: auth runs first, then directory resolution. Both are
+	// pass-throughs for the global routes that do not need them.
+	r.Use(opts.Auth.Middleware)
+	r.Use(directoryMiddleware(opts.Cwd))
+
+	registered := map[string]bool{}
+	reg := func(method, path string, h http.HandlerFunc) {
+		registered[routeKey(method, path)] = true
+		r.MethodFunc(method, path, h)
+	}
+
 	// Real endpoints first; the spec-driven 501 loop skips anything already set.
-	r.Get("/global/health", healthHandler(opts.Version))
-	r.Get("/doc", docHandler())
+	reg(http.MethodGet, "/global/health", healthHandler(opts.Version))
+	reg(http.MethodGet, "/doc", docHandler())
 	// /openapi.json is a Forge known-addition (alias of /doc); opencode serves
 	// the spec only at /doc. Logged in conformance/known-additions.json.
-	r.Get("/openapi.json", docHandler())
+	reg(http.MethodGet, "/openapi.json", docHandler())
+	reg(http.MethodGet, "/config", configHandler())
 
-	registered := map[string]bool{
-		routeKey(http.MethodGet, "/global/health"): true,
-		routeKey(http.MethodGet, "/doc"):           true,
-		routeKey(http.MethodGet, "/openapi.json"):  true,
+	if opts.Sessions != nil {
+		registerSessionRoutes(reg, opts.Sessions)
 	}
 
 	ops, err := spec.Operations()
@@ -77,6 +99,21 @@ func docHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
+	}
+}
+
+// configHandler returns the merged opencode-format config for the request's
+// resolved directory (config-get scenario).
+func configHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := config.Load(DirectoryFromContext(r.Context()))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"_tag": "ConfigError", "message": err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
 	}
 }
 

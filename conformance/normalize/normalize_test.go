@@ -103,6 +103,19 @@ func TestReplacesRandomSlug(t *testing.T) {
 	}
 }
 
+func TestReplacesSemverVersionButNotArbitraryVersionField(t *testing.T) {
+	n := New()
+	m := normJSON(t, n, `{"version":"1.15.11","model":{"version":"my-custom-tag"}}`)
+	if m["version"] != "<ver>" {
+		t.Errorf("semver version: want <ver>, got %v", m["version"])
+	}
+	// A non-semver "version" value is real data and must be compared, not masked.
+	model := m["model"].(map[string]any)
+	if model["version"] != "my-custom-tag" {
+		t.Errorf("non-semver version must be preserved, got %v", model["version"])
+	}
+}
+
 func TestReplacesTimestampEmbeddedInString(t *testing.T) {
 	n := New()
 	// opencode auto-titles sessions "New session - <RFC3339>".

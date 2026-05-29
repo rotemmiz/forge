@@ -21,11 +21,20 @@ const (
 	tsPlaceholder   = "<ts>"
 	pathPlaceholder = "<path>"
 	slugPlaceholder = "<slug>"
+	verPlaceholder  = "<ver>"
 )
 
 // slugFields hold server-generated random slugs (e.g. session "slug":"happy-eagle"),
 // which differ run-to-run and must be normalized.
 var slugFields = map[string]bool{"slug": true}
+
+// verFields hold the daemon's wire-version string (e.g. session "version":
+// "1.15.11"). It is environment/build-specific — opencode stamps its own release
+// and Forge stamps its opencode-compat target — so it is normalized to keep the
+// dual diff build-independent (plan: "compat constant + normalize"). The value
+// is only collapsed when it is semver-shaped (see isVersion), so an unrelated
+// "version" field carrying arbitrary data is still compared, not masked.
+var verFields = map[string]bool{"version": true}
 
 // idFields are object keys whose string values are ULIDs (prefixed or raw) and
 // therefore differ run-to-run. Plan 12 §d names id/sessionID/messageID/partID/
@@ -57,6 +66,9 @@ var (
 	// prefixedIDSubRe matches a prefixed ULID anywhere inside a string, e.g. the
 	// id embedded in an error message "Session not found: ses_01J…".
 	prefixedIDSubRe = regexp.MustCompile(`[a-z]+_[0-9A-Za-z]{20,}`)
+	// semverRe matches a semver-shaped version string (optional pre-release /
+	// build suffix), so only genuine daemon versions are collapsed.
+	semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 )
 
 // Normalizer replaces volatile values. PathReplacements maps absolute path
@@ -87,6 +99,8 @@ func (n *Normalizer) Normalize(v any) any {
 				t[k] = tsPlaceholder
 			case slugFields[k] && isString(child):
 				t[k] = slugPlaceholder
+			case verFields[k] && isVersion(child):
+				t[k] = verPlaceholder
 			default:
 				t[k] = n.Normalize(child)
 			}
@@ -181,6 +195,13 @@ func (n *Normalizer) replacePaths(s string) string {
 func isString(v any) bool {
 	_, ok := v.(string)
 	return ok
+}
+
+// isVersion reports whether v is a semver-shaped string (e.g. "1.15.11"), the
+// only form of a "version" field that is volatile across daemons/builds.
+func isVersion(v any) bool {
+	s, ok := v.(string)
+	return ok && semverRe.MatchString(s)
 }
 
 func isVolatileID(v any) bool {

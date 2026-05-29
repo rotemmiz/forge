@@ -126,3 +126,77 @@ scripted run; the unchecked `[ ]` items need your judgment (decisions, design co
       `{"_tag":"NotImplemented",...}` (wire contract present; behavior is Phase B). The identical SDK
       call against real opencode → `HTTP 200` + session array. Same client, same request, two daemons
       — only "implemented vs 501" differs. (automated 2026-05-29)
+
+## Plan-01 M1 (config + GET /config) & M2 (SQLite + session CRUD) — 2026-05-29
+
+Implemented: `internal/id` (opencode id.ts port), `internal/config` (JSONC loader + opencode
+merge), `internal/auth` (Basic + `?auth_token`), `internal/worktree` (realpath + git-root/`/`
+fallback), `internal/storage` (modernc.org/sqlite + embedded idempotent schema),
+`internal/session` (CRUD + wire shape). Wired into `internal/server` behind an `auth → directory`
+middleware chain; `cmd/forged` opens storage + passes options.
+
+- [x] Dual gate GREEN: fresh `forged` on :4097 (fresh `HOME`/`FORGE_DB`, auth on) vs live opencode
+      → `0 blocking difference(s); 11 known-divergence warning(s); 10 scenarios`. The implemented
+      scenarios — `session-create-list`, `session-get-delete`, `session-fork-children`, `config-get`,
+      `auth-basic-ok`, `auth-missing-401`, `auth-token-query` — diff to **zero**. (automated)
+- [x] Self-diff still GREEN after adding the `version` strip to the normalizer (0 blocking). (automated)
+- [x] CI mimic GREEN locally: `go build/vet`, `gofmt -l` empty, `golangci-lint` 0 issues,
+      `go test ./...`, `make gen` + `git diff --exit-code internal/api/gen/` unchanged. (automated)
+- [ ] DECISION (user-approved): the session `version` field is a **configurable opencode-compat
+      constant** (`session.DefaultCompatVersion = "1.15.11"`, the frozen-contract target), NOT
+      Forge's own build version (`/global/health` still reports `0.0.1`). The conformance normalizer
+      now collapses any `"version"` string to `<ver>` so the dual diff is build-independent. Confirm
+      this split reads correctly.
+- [ ] GATE SCOPING: the dual gate is currently scoped to the implemented endpoints by **temporary
+      Phase-A known-divergence entries** in `conformance/known-divergences.json`: `provider-list`
+      (needs the models.dev catalog — plan 04) and `sse-*` (event bus — plan-01 M4). REMOVE these two
+      entries when M4 / plan-04 land so the scenarios become blocking again.
+- [ ] FRESH-STATE REQUIREMENT: because `GET /session` is a GLOBAL list, the dual gate only matches
+      when `forged` starts with a fresh DB (the runner already gives opencode a fresh `HOME`). Start
+      forge for the gate with `HOME=$(mktemp -d) FORGE_DB=$HOME/forge.db ./bin/forged --port 4097`
+      and do not hit it with smoke requests first (a lingering session makes `session-create-list`
+      report `len 1 != len 2`).
+- [ ] WIRE-SHAPE eyeball: `POST /session` emits exactly
+      `{cost,directory,id,path,projectID:"global",slug,time:{created,updated},title:"New session - <iso>",tokens:{...},version}`
+      with optionals omitted. `directory` is the symlink-resolved path; `path` is it relative to the
+      worktree (`/` for non-git → leading slash stripped, hence the recorded `private<path>`).
+      Confirm against `internal/session/session.go` + opencode `session.ts:61-158,208-224`.
+- [ ] FORK QUIRK replicated: `POST /session/{id}/fork` returns a new session with title `… (fork #1)`
+      and **no `parentID`**; `GET /session/{id}/children` returns `[]` (matches observed opencode
+      1.15.x). Revisit when prompt/agent flows need real parent tracking (plan 02).
+- [ ] SCHEMA + MIGRATOR (DECISION, "cleanest" per user 2026-05-29): `internal/storage` uses a
+      dependency-free **versioned** migrator gated on SQLite's `PRAGMA user_version` (migration files
+      `NNNN_name.sql`; each applies once in a tx, then bumps user_version) — NOT golang-migrate/sqlx
+      (plan 01 §5) and NOT bare `CREATE IF NOT EXISTS` (which can't carry future ALTERs). PRAGMAs
+      (WAL/foreign_keys) via the modernc DSN; `SetMaxOpenConns(1)` serializes writes for Phase A.
+      Confirm this deviation from the plan's golang-migrate/sqlx mention is acceptable.
+- [ ] New runtime deps landed (per DEPENDENCIES.md / plan 01): `github.com/tailscale/hujson`,
+      `modernc.org/sqlite`. Confirm `go.mod`/`go.sum` additions are acceptable.
+
+### Review-subagent findings (2026-05-29) — addressed / noted
+
+- [x] FIXED (blocking-ish): `?workspace` was wrongly used as a directory fallback. opencode's
+      `defaultDirectory` is strictly `?directory → x-opencode-directory → cwd`
+      (workspace-routing.ts:86-87); `?workspace` only selects a workspaceID (70-83). Removed the
+      branch in `internal/server/directory.go`.
+- [x] FIXED: `GET /session` now orders by `time_updated DESC, id DESC LIMIT 100` to match
+      opencode's default page (session.ts:927,934). (The reviewer also claimed a `time_archived IS
+      NULL` filter — VERIFIED FALSE: `listByProject` has no archived filter, so none was added.)
+      Aligned `session_time_idx` to `(time_updated, id)`.
+- [x] FIXED: the conformance `version` normalizer now only collapses **semver-shaped** values
+      (`^\d+\.\d+\.\d+`), so an unrelated `"version"` field carrying arbitrary data is still
+      compared rather than masked. Added a regression test.
+- [x] FIXED (2nd review): session `path` at a git worktree ROOT now matches opencode —
+      `RelPath(root, root)` returns `""` (was Go's `"."`), and `Info.Path` no longer uses
+      `omitempty` (opencode always emits `path`, dropping only `undefined`). Added worktree tests.
+- [ ] NOTED (acceptable for M1/M2, revisit later): worktree detection uses nearest-ancestor-`.git`
+      (`internal/worktree/worktree.go`) rather than `git rev-parse --show-toplevel`. Agrees for
+      normal repos and non-git dirs (`/`); may diverge for linked worktrees / gitlinks. Consider
+      shelling to git for full parity when git-project sessions are exercised.
+- [ ] NOTED (deferred with #23-25): `GET /session` is a GLOBAL list; opencode scopes by
+      project_id + directory (session.ts:897,911-915). Pending the directory-routing investigation
+      before a clean per-directory scenario can be written.
+- [ ] NOTED (edge case, deferred with #23-25): opencode decodes a `?directory` query value twice
+      (URLSearchParams + instance-context `decode`); Forge decodes it once. Only matters for paths
+      containing literal `%` sequences. The SDK uses the header path, which Forge handles correctly
+      (PathUnescape, no `+`→space).

@@ -316,3 +316,23 @@ are the `[ ]` notes above (deferred edges) + the deferred live PTY WS conformanc
       trailing user message; (b) `providerExecuted` tools are not yet modeled (deferred to the
       Anthropic/server-tool path). Both are documented; confirm they belong in the plan-12
       known-divergence registry.
+
+## M2–M9 (plan 02) — engine end-to-end
+
+- [x] `go test -race ./...` green; `golangci-lint run` 0 issues; `gofmt -l` clean; `make gen` byte-stable. (automated 2026-05-29)
+- [x] Deterministic integration suite green: `internal/engine/enginetest` `TestE2E_TextOnly`
+      (streamed text → SSE deltas + persisted parts) and `TestE2E_ToolCall` (tool executed, result
+      fed into the 2nd request, file actually written, 2 provider calls). (automated 2026-05-29)
+- [x] Two local review subagents (M1; M2–M9) returned no blocking findings; should-fix items
+      applied (rune truncation, lock-safe mock, usage clamp, overflow formula, interrupt shape,
+      patch context verify). (automated 2026-05-29)
+- [ ] LIVE PROOF (needs your free-tier key): run one real prompt end-to-end against an
+      OpenAI-compatible provider. Example (Groq free tier):
+      `FORGE_TEST_BASE_URL=https://api.groq.com/openai/v1 FORGE_TEST_MODEL=llama-3.3-70b-versatile \
+       FORGE_TEST_API_KEY=$GROQ_API_KEY go test ./internal/engine/enginetest -run TestLive -v`
+      Expect a non-empty reply logged with finish/tokens/cost. (Works with Cerebras/OpenRouter/Ollama too.)
+- [ ] DEFERRED (tracked): Anthropic provider (was M2, now post-M9); M10 compaction (overflow
+      threshold to be finalized there); server /session/:id/prompt endpoint wiring (plan 09) so the
+      live path is reachable over HTTP, not just via the engine API.
+- [ ] DESIGN CONFIRM: M6 task/websearch/skill take injected collaborators with stub defaults;
+      doom-loop scope counts tool calls (not arbitrary parts); websearch is flag-gated only.

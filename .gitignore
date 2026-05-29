@@ -12,6 +12,11 @@ coverage.*
 /bin/
 /dist/
 
+# Local env vars / secrets (never commit; .env.example documents the keys)
+.env
+.env.local
+.envrc
+
 # Local daemon runtime data
 *.db
 *.db-wal

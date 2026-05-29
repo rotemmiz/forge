@@ -228,3 +228,42 @@ fan-out, non-blocking drop, publish forwards to global wrapped {payload,director
       ready-channel) + dispose/`server.instance.disposed` emission land when init grows
       (config/LSP/PTY) or instances are torn down — heartbeat + dispose-termination are wired in the
       stream but no disposal is triggered yet (no TTL; matches opencode keeping instances for life).
+
+## Plan-01 M5 (PTY over WebSocket) — 2026-05-29
+
+Implemented `internal/pty` (spawn via creack/pty, UTF-16-code-unit ring buffer + cursor, subscribers,
+connect/replay, single-use connect tickets, shell helpers) and the server endpoints:
+GET /pty/shells, GET /pty, POST /pty, GET/PUT/DELETE /pty/{ptyID}, POST /pty/{ptyID}/connect-token,
+and the WebSocket GET /pty/{ptyID}/connect (coder/websocket). A per-instance `pty.Manager` hangs off
+`instance.Context`. Auth middleware skips Basic for `/pty/{id}/connect?ticket=` (the handler burns the
+ticket instead).
+
+- [x] Validated by UNIT tests (cursor counts UTF-16 code units incl. a 😀 surrogate pair; partial
+      UTF-8 held across reads; 2MB ring trim advances bufCur; replay offset/`-1`/chunking; control
+      frame `0x00`+`{cursor}`) and an END-TO-END WebSocket test (real shell → replay text frames +
+      binary control frame; ticket mint → ticketed WS bypasses Basic auth; single-use ticket
+      rejected on reuse). `go test -race ./internal/pty ./internal/server` clean. (automated)
+- [x] spec-drift 131/131 0 breaking; dual gate still 0 blocking (PTY has no scenario yet). (automated)
+- [ ] WIRE FORMAT (source-grounded, not yet live-diffed): data = TEXT frames, control = BINARY
+      `0x00`+UTF-8 `{"cursor":n}` (pty/index.ts:44-51 string-vs-Uint8Array send). cursor/buffer are
+      UTF-16 code units (recorded Finding). `?cursor=-1`=current end, `>=0`=absolute offset,
+      missing/invalid=0. A live opencode-vs-forge PTY WS diff is still DEFERRED (harness PTY capture
+      not built — no bun; verify.md C2 note). Confirm a live interop before claiming PTY done-done.
+- [x] FIXED (review): on process exit Forge now closes the ptmx fd AND removes the session from the
+      manager, matching opencode (pty/index.ts:264-270) — no fd/session leak; post-exit GET 404s and
+      LIST omits it. (Earlier draft retained exited sessions; that was a leak and a divergence.)
+- [x] FIXED (review): `splitValidUTF8` now holds back ONLY a genuine incomplete trailing multibyte
+      rune and emits everything else as valid UTF-8 (U+FFFD for invalid bytes), so text WS frames are
+      always valid UTF-8 (RFC 6455) and invalid bytes never stall the stream. Per-write 30s timeout
+      added so a non-reading client can't block the pump goroutines. Ticket consume no longer burns on
+      a ptyID mismatch. (race-clean; new boundary tests added.)
+- [ ] NOTED: pty lifecycle bus events (pty.created/updated/exited/deleted) are NOT yet published to
+      the event bus — wire when the agent engine needs them (plan 02). Confirm acceptable for now.
+- [ ] DEFERRED (pre-existing gap, tracked): no CORS/origin check on connect-token issuance or ticket
+      consume; opencode gates both on validOrigin (handlers/pty.ts:98,146). Forge has no CORS layer
+      yet anywhere (config field only) — wire when config/CORS lands; add to the divergence registry.
+- [ ] NOTED: malformed JSON on POST/PUT /pty is ignored (proceeds with zero-value input) rather than
+      400 like opencode. Minor; revisit with request-validation pass.
+- [ ] NOTED: for a login-capable shell (sh/bash/zsh/...) Forge appends `-l` to args exactly as
+      opencode does (pty/index.ts:191-193), even when an explicit `-c` command is given — matches
+      opencode, including the quirk that `-l` then lands after the `-c` script.

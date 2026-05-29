@@ -32,8 +32,9 @@ scripted run; the unchecked `[ ]` items need your judgment (decisions, design co
       collapses, 53 dup union members dropped, 4 schema renames). The generated
       `internal/api/gen/forge.gen.go` has a `ServerInterface` with **131 methods**, and regeneration
       is byte-stable (no git diff). (automated 2026-05-29)
-- [ ] DECISION TO CONFIRM: the generated file is ~1.26 MB / 36k lines and is **committed** (per plan).
-      If you'd rather generate-on-build instead of committing it, say so — it's a one-line CI change.
+- [x] DECISION CONFIRMED (2026-05-29): the generated file (~1.26 MB / 36k lines) stays **committed**.
+      Golden path completed — CI job `codegen-fresh` regenerates and runs `git diff --exit-code
+      internal/api/gen/`, so a stale/hand-edited commit fails CI. Regenerate with `make gen`.
 - [ ] DECISION TO CONFIRM: oapi-codegen can't load OpenAPI 3.1, so `internal/tools/downconvert`
       produces a derived 3.0 spec for codegen only. The frozen contract stays 3.1. Confirm this
       derived-spec approach (vs switching codegen tools) is acceptable.

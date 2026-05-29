@@ -32,3 +32,19 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  codegen-fresh:
+    # The generated API surface (internal/api/gen/forge.gen.go) is committed and
+    # used by every build; this job asserts it is reproducible from the vendored
+    # spec so a stale or hand-edited commit fails CI. Regenerate with `make gen`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Regenerate
+        run: make gen
+      - name: Assert committed codegen is up to date
+        run: git diff --exit-code internal/api/gen/ || (echo "::error::forge.gen.go is stale — run 'make gen' and commit"; exit 1)

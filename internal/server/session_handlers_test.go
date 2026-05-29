@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/rotemmiz/forge/internal/auth"
+	"github.com/rotemmiz/forge/internal/bus"
+	"github.com/rotemmiz/forge/internal/instance"
 	"github.com/rotemmiz/forge/internal/session"
 	"github.com/rotemmiz/forge/internal/storage"
 )
@@ -31,11 +33,14 @@ func newBackedServer(t *testing.T, authCfg auth.Config) http.Handler {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	g := bus.NewGlobal()
 	h, err := New(Options{
-		Version:  "0.0.1",
-		Auth:     authCfg,
-		Cwd:      t.TempDir(),
-		Sessions: session.NewStore(db),
+		Version:   "0.0.1",
+		Auth:      authCfg,
+		Cwd:       t.TempDir(),
+		Sessions:  session.NewStore(db),
+		Instances: instance.NewManager(g),
+		Global:    g,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

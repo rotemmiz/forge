@@ -131,6 +131,12 @@ func (p *Processor) executePending(ctx context.Context) {
 			defer p.wg.Done()
 			res, err := p.cfg.Executor.Execute(ctx, call)
 			if err != nil {
+				if ctx.Err() != nil {
+					// Cancelled mid-execution: record the interrupted shape so
+					// replay shows "[Tool execution was interrupted]".
+					p.interruptCall(ctx, call.CallID)
+					return
+				}
 				p.failCall(ctx, call.CallID, err.Error())
 				return
 			}

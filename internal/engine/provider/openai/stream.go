@@ -275,12 +275,22 @@ func mapUsage(u *usageChunk) *llm.TokenUsage {
 	if u.CompletionTokensDetails != nil {
 		reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
+	// Clamp every component to >= 0: a provider that double-reports must not
+	// produce negative token counts (and thus negative cost). Mirrors opencode's
+	// safe() in session.ts:379-381.
 	return &llm.TokenUsage{
-		Input:     u.PromptTokens - cached,
-		Output:    u.CompletionTokens - reasoning,
-		Reasoning: reasoning,
-		CacheRead: cached,
+		Input:     nonNeg(u.PromptTokens - cached),
+		Output:    nonNeg(u.CompletionTokens - reasoning),
+		Reasoning: nonNeg(reasoning),
+		CacheRead: nonNeg(cached),
 	}
+}
+
+func nonNeg(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func parseArgs(s string) map[string]any {

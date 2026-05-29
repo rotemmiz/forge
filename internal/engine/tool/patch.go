@@ -125,9 +125,10 @@ func applyHunks(lines, hunkLines []string) ([]string, error) {
 				consumed++
 			case strings.HasPrefix(hl, " "):
 				idx := pos + consumed
-				if idx < len(result) {
-					replacement = append(replacement, result[idx])
+				if idx >= len(result) || result[idx] != hl[1:] {
+					return nil, fmt.Errorf("context mismatch at line %d", idx+1)
 				}
+				replacement = append(replacement, result[idx])
 				consumed++
 			default:
 				// Bare "" (trailing-newline split artifact) or markers like

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/permission"
 	"github.com/rotemmiz/forge/internal/engine/runstate"
 	"github.com/rotemmiz/forge/internal/instance"
+	"github.com/rotemmiz/forge/internal/session"
 )
 
 // allowAllRulesets is the Phase-B default permission policy for the HTTP prompt
@@ -80,6 +82,9 @@ func buildEngine(opts Options, inst *instance.Context, directory string) *engine
 func promptHandler(opts Options, async bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "sessionID")
+		if !requireSession(w, r, opts, sessionID) {
+			return
+		}
 		var body promptBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "BadRequest", "invalid JSON body")
@@ -93,14 +98,19 @@ func promptHandler(opts Options, async bool) http.HandlerFunc {
 		inst := opts.Instances.Get(directory)
 		eng := buildEngine(opts, inst, directory)
 
+		// Detach from the request context: a client disconnect must NOT abort the
+		// run — only POST /abort cancels it (via the run lock), matching opencode.
+		// WithoutCancel keeps request-scoped values but drops cancellation/deadline.
+		runCtx := context.WithoutCancel(r.Context())
+
 		if async {
-			// Run on the daemon's base context so the loop survives the request.
-			go func() { _, _ = eng.Prompt(opts.BaseCtx, body.toInput(sessionID)) }()
-			writeJSON(w, http.StatusOK, map[string]any{"sessionID": sessionID})
+			// opencode returns 204 No Content (handlers/session.ts:321).
+			go func() { _, _ = eng.Prompt(runCtx, body.toInput(sessionID)) }()
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		out, err := eng.Prompt(r.Context(), body.toInput(sessionID))
+		out, err := eng.Prompt(runCtx, body.toInput(sessionID))
 		if err != nil {
 			var busy *runstate.BusyError
 			if errors.As(err, &busy) {
@@ -117,6 +127,9 @@ func promptHandler(opts Options, async bool) http.HandlerFunc {
 func listMessagesHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := chi.URLParam(r, "sessionID")
+		if !requireSession(w, r, opts, sessionID) {
+			return
+		}
 		msgs, err := opts.Messages.List(r.Context(), sessionID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "StorageError", err.Error())
@@ -133,6 +146,20 @@ func abortHandler(opts Options) http.HandlerFunc {
 		inst.RunState.Cancel(sessionID)
 		writeJSON(w, http.StatusOK, true)
 	}
+}
+
+// requireSession writes a 404 and returns false if the session does not exist,
+// matching opencode's requireSession gate (handlers/session.ts:78-80).
+func requireSession(w http.ResponseWriter, r *http.Request, opts Options, sessionID string) bool {
+	if _, err := opts.Sessions.Get(r.Context(), sessionID); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "NotFound", "session not found: "+sessionID)
+		} else {
+			writeError(w, http.StatusInternalServerError, "StorageError", err.Error())
+		}
+		return false
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, status int, tag, msg string) {

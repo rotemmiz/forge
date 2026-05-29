@@ -126,3 +126,29 @@ func TestPromptEndpoint_RejectsMissingModel(t *testing.T) {
 		t.Fatalf("missing model should 400, got %d", rec.Code)
 	}
 }
+
+func TestPromptEndpoint_UnknownSession404(t *testing.T) {
+	mock := enginetest.NewMockProvider()
+	h, _, dir := promptTestServer(t, mock)
+	req := httptest.NewRequest(http.MethodPost, "/session/ses_nope/message?directory="+dir,
+		strings.NewReader(`{"model":{"providerID":"openai","modelID":"gpt-4o"},"parts":[{"type":"text","text":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session should 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPromptAsync_Returns204(t *testing.T) {
+	mock := enginetest.NewMockProvider(
+		enginetest.NewScript().StepStart().Text("t1", "ok").StepFinish("stop", llm.TokenUsage{}).Finish().Events(),
+	)
+	h, sessionID, dir := promptTestServer(t, mock)
+	req := httptest.NewRequest(http.MethodPost, "/session/"+sessionID+"/prompt_async?directory="+dir,
+		strings.NewReader(`{"model":{"providerID":"openai","modelID":"gpt-4o"},"parts":[{"type":"text","text":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("prompt_async should be 204 empty, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}

@@ -65,7 +65,21 @@ func compareSteps(r *Report, exp, act *result.Scenario) {
 		for _, d := range diffJSONStrings(es.Body, as.Body) {
 			r.add(exp.Name, label, es.Body, as.Body, "body."+d)
 		}
+		compareHeaders(r, exp.Name, label, es.Headers, as.Headers)
 		compareSSE(r, exp.Name, label, es.SSE, as.SSE)
+	}
+}
+
+func compareHeaders(r *Report, scenario, label string, exp, act map[string]string) {
+	for k, ev := range exp {
+		av, ok := act[k]
+		if !ok {
+			r.add(scenario, label, ev, "(missing)", fmt.Sprintf("header.%s: present != missing", k))
+			continue
+		}
+		if ev != av {
+			r.add(scenario, label, ev, av, fmt.Sprintf("header.%s: %q != %q", k, ev, av))
+		}
 	}
 }
 

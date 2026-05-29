@@ -8,6 +8,8 @@ import (
 var (
 	targetFlag = flag.String("target", "", "daemon base URL to run scenarios against; empty skips the suite")
 	outFlag    = flag.String("out", "", "write the result JSON to this path")
+	userFlag   = flag.String("user", "", "Basic-auth username (for auth scenarios)")
+	passFlag   = flag.String("pass", "", "Basic-auth password (for auth scenarios)")
 )
 
 // TestSuite runs the scenario set against -target and optionally writes the
@@ -18,7 +20,7 @@ func TestSuite(t *testing.T) {
 	if *targetFlag == "" {
 		t.Skip("no -target; skipping conformance suite (set -target=http://host:port)")
 	}
-	f, err := Run(*targetFlag)
+	f, err := Run(*targetFlag, *userFlag, *passFlag)
 	if err != nil {
 		t.Fatalf("run suite: %v", err)
 	}

@@ -30,12 +30,13 @@ type Scenario struct {
 // Step is one observable interaction: an HTTP request/response and/or a captured
 // SSE event sequence. Bodies and SSE events hold normalized canonical JSON.
 type Step struct {
-	Name   string   `json:"name"`
-	Method string   `json:"method,omitempty"`
-	Path   string   `json:"path,omitempty"`
-	Status int      `json:"status,omitempty"`
-	Body   string   `json:"body,omitempty"`
-	SSE    []string `json:"sse,omitempty"`
+	Name    string            `json:"name"`
+	Method  string            `json:"method,omitempty"`
+	Path    string            `json:"path,omitempty"`
+	Status  int               `json:"status,omitempty"`
+	Body    string            `json:"body,omitempty"`
+	SSE     []string          `json:"sse,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"` // captured response headers (e.g. WWW-Authenticate)
 }
 
 // Load reads a result file.

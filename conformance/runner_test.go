@@ -19,7 +19,7 @@ func TestRunnerAgainstForgedSkeleton(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	f, err := Run(srv.URL)
+	f, err := Run(srv.URL, "", "")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

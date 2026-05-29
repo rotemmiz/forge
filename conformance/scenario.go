@@ -25,6 +25,9 @@ var Scenarios = []Scenario{
 	{Name: "provider-list", Run: scenarioProviderList},
 	{Name: "sse-instance-connected", Run: scenarioSSEInstanceConnected},
 	{Name: "sse-global-connected", Run: scenarioSSEGlobalConnected},
+	{Name: "auth-basic-ok", Run: scenarioAuthBasicOK},
+	{Name: "auth-missing-401", Run: scenarioAuthMissing},
+	{Name: "auth-token-query", Run: scenarioAuthTokenQuery},
 }
 
 type createdSession struct {
@@ -127,3 +130,43 @@ func scenarioSSEGlobalConnected(c *Client) ([]result.Step, error) {
 	}
 	return []result.Step{s}, nil
 }
+
+// --- Auth (plan 12 #20-22; authorization.ts:9,11,82-86). These run against an
+// auth-enabled daemon (the runner sets OPENCODE_SERVER_PASSWORD + client creds). ---
+
+// scenarioAuthBasicOK: a request with valid Basic credentials succeeds (200).
+func scenarioAuthBasicOK(c *Client) ([]result.Step, error) {
+	s, err := c.Probe("basic", http.MethodGet, "/config", ReqOpts{Auth: AuthDefault})
+	if err != nil {
+		return nil, err
+	}
+	return []result.Step{s}, nil
+}
+
+// scenarioAuthMissing: no credentials → 401 with WWW-Authenticate: Basic
+// realm="Secure Area" (authorization.ts:11,53). The captured header is the signal.
+func scenarioAuthMissing(c *Client) ([]result.Step, error) {
+	s, err := c.Probe("no-auth", http.MethodGet, "/config",
+		ReqOpts{Auth: AuthNone, Capture: []string{"Www-Authenticate"}})
+	if err != nil {
+		return nil, err
+	}
+	return []result.Step{s}, nil
+}
+
+// scenarioAuthTokenQuery: ?auth_token=base64(user:pass) is equivalent to Basic
+// (authorization.ts:9,82-84) → 200.
+func scenarioAuthTokenQuery(c *Client) ([]result.Step, error) {
+	s, err := c.Probe("token", http.MethodGet, "/config", ReqOpts{Auth: AuthToken})
+	if err != nil {
+		return nil, err
+	}
+	return []result.Step{s}, nil
+}
+
+// Directory-routing scenarios (#23-25) are deferred: opencode 1.15.x's session
+// listing relative to the x-opencode-directory header vs the ?directory query is
+// non-obvious (GET /session appears to return a global/accumulating list, and
+// header/query filtering behaved inconsistently across probes). The Client
+// supports DirHeader/DirQuery/DirNone so the scenarios can be added once the
+// routing semantics are pinned down. See tasks/verify.md.

@@ -7,16 +7,46 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/rotemmiz/forge/conformance/normalize"
 	"github.com/rotemmiz/forge/conformance/result"
 )
+
+// AuthMode selects how a request authenticates.
+type AuthMode int
+
+// Auth modes for a request.
+const (
+	AuthDefault AuthMode = iota // Basic header when the client has credentials
+	AuthNone                    // send no credentials (to exercise 401)
+	AuthToken                   // ?auth_token=base64(user:pass), no Basic header
+)
+
+// DirMode selects how the per-directory instance is addressed.
+type DirMode int
+
+// Directory-addressing modes for a request.
+const (
+	DirHeader DirMode = iota // x-opencode-directory header (the usual path)
+	DirQuery                 // ?directory=<dir> query param, no header
+	DirNone                  // neither (exercise the cwd fallback)
+)
+
+// ReqOpts tunes a single request for auth/routing conformance scenarios.
+type ReqOpts struct {
+	Auth    AuthMode
+	Dir     DirMode
+	Capture []string // response header names to record into the step
+	Body    any
+}
 
 // Client is a thin HTTP client for one target daemon. It injects the directory
 // header and optional Basic auth, and normalizes every captured response so two
@@ -42,39 +72,58 @@ func NewClient(baseURL, dir string, paths ...string) *Client {
 	}
 }
 
-func (c *Client) newRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
-	var r io.Reader
-	if body != nil {
-		r = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, r)
+func (c *Client) buildRequest(ctx context.Context, method, path string, o ReqOpts) (*http.Request, error) {
+	u, err := url.Parse(c.BaseURL + path)
 	if err != nil {
 		return nil, err
 	}
-	if c.Dir != "" {
+	q := u.Query()
+	if o.Dir == DirQuery && c.Dir != "" {
+		q.Set("directory", c.Dir)
+	}
+	if o.Auth == AuthToken {
+		q.Set("auth_token", base64.StdEncoding.EncodeToString([]byte(c.User+":"+c.Pass)))
+	}
+	u.RawQuery = q.Encode()
+
+	var raw []byte
+	if o.Body != nil {
+		b, err := json.Marshal(o.Body)
+		if err != nil {
+			return nil, err
+		}
+		raw = b
+	}
+	var body io.Reader
+	if raw != nil {
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return nil, err
+	}
+	if o.Dir == DirHeader && c.Dir != "" {
 		req.Header.Set("x-opencode-directory", c.Dir)
 	}
-	if c.User != "" || c.Pass != "" {
+	if o.Auth == AuthDefault && (c.User != "" || c.Pass != "") {
 		req.SetBasicAuth(c.User, c.Pass)
 	}
-	if body != nil {
+	if raw != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, nil
 }
 
-// Do performs an HTTP request and returns a normalized step. The request body,
-// if any, is JSON-encoded; the response body is normalized.
+// Do performs a standard request (Basic auth, directory header) and returns a
+// normalized step.
 func (c *Client) Do(stepName, method, path string, body any) (result.Step, error) {
-	var raw []byte
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return result.Step{}, err
-		}
-		raw = b
-	}
-	req, err := c.newRequest(context.Background(), method, path, raw)
+	return c.Probe(stepName, method, path, ReqOpts{Body: body})
+}
+
+// Probe performs a request with explicit auth/routing options and optional
+// response-header capture — used by the auth and directory-routing scenarios.
+func (c *Client) Probe(stepName, method, path string, o ReqOpts) (result.Step, error) {
+	req, err := c.buildRequest(context.Background(), method, path, o)
 	if err != nil {
 		return result.Step{}, err
 	}
@@ -89,13 +138,20 @@ func (c *Client) Do(stepName, method, path string, body any) (result.Step, error
 	}
 	c.lastBody = respBody
 
-	return result.Step{
+	step := result.Step{
 		Name:   stepName,
 		Method: method,
 		Path:   c.Norm.Path(path),
 		Status: resp.StatusCode,
 		Body:   c.normalizeBody(respBody),
-	}, nil
+	}
+	if len(o.Capture) > 0 {
+		step.Headers = map[string]string{}
+		for _, h := range o.Capture {
+			step.Headers[strings.ToLower(h)] = resp.Header.Get(h)
+		}
+	}
+	return step, nil
 }
 
 // LastJSON unmarshals the most recent response body, for chaining steps (e.g.
@@ -109,7 +165,7 @@ func (c *Client) LastJSON(v any) error {
 func (c *Client) SSE(stepName, path string, wait time.Duration, maxEvents int) (result.Step, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	req, err := c.buildRequest(ctx, http.MethodGet, path, ReqOpts{})
 	if err != nil {
 		return result.Step{}, err
 	}

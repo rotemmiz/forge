@@ -103,9 +103,18 @@ scripted run; the unchecked `[ ]` items need your judgment (decisions, design co
       opencode's TS `http-recorder` (no `bun` here; Go is better for CI). PTY WS capture (Finding #3)
       is deferred until forge serves PTY (plan 01 M5 / Phase B); the cassette format already supports
       it and has a synthetic control-frame test.
-- [ ] Auth (#20–22) and directory-routing (#23–25) scenarios are NOT yet in the agent-free set —
-      they need opencode started with `OPENCODE_SERVER_PASSWORD` / multi-dir setup. Tracked as a
-      follow-up within Phase A.
+- [x] Auth scenarios (#20–22) ADDED (2026-05-29): the runner now starts opencode auth-enabled and
+      the suite sends Basic creds. auth-basic-ok→200, auth-missing-401→401 + captured
+      `www-authenticate: Basic realm="Secure Area"`, auth-token-query (`?auth_token=base64(user:pass)`)→200.
+      Self-diff green at 10 scenarios. (automated)
+- [ ] Directory-routing scenarios (#23–25) DEFERRED — FINDING: in opencode 1.15.x, `GET /session`
+      relative to `x-opencode-directory` (header) vs `?directory` (query) behaved inconsistently
+      across probes (the list looks global/accumulating; header vs query filtering didn't agree:
+      header-list returned multiple sessions in-suite but 1 in isolation; `?directory` returned 0
+      for a `/var/folders` dir but 1 for `/tmp/dirA` earlier). Plan 01's "header≡query equivalent"
+      (older `workspace-routing.ts:87`) needs re-validation against 1.15.x's workspace/control-plane
+      routing before a clean scenario can be written. The Client already supports DirHeader/DirQuery/
+      DirNone for when it's pinned down.
 - [ ] CI workflow `.github/workflows/conformance.yml` authored (spec-drift + self-diff, opencode
       pinned to 1.15.11) but NOT run (hosted CI usage-limited). Local gate before push: review subagent.
 

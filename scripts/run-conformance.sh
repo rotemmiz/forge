@@ -16,23 +16,31 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RESULTS="$REPO_ROOT/conformance/results"
 mkdir -p "$RESULTS"
 
+# Auth is enabled so the auth-conformance scenarios (#20-22) are exercised; the
+# suite sends these Basic credentials on every request.
+OC_USER="${OPENCODE_SERVER_USERNAME:-opencode}"
+OC_PASS="${OPENCODE_SERVER_PASSWORD:-conformance-test}"
+
 wait_health() {
   for _ in $(seq 1 60); do
-    if curl -fsS --max-time 1 "http://127.0.0.1:$PORT/global/health" >/dev/null 2>&1; then return 0; fi
+    if curl -fsS --max-time 1 -u "$OC_USER:$OC_PASS" "http://127.0.0.1:$PORT/global/health" >/dev/null 2>&1; then return 0; fi
     sleep 0.5
   done
   echo "error: opencode did not become healthy on port $PORT" >&2
   return 1
 }
 
-# run_opencode_suite <out.json>: start a pristine opencode, run the suite, stop it.
+# run_opencode_suite <out.json>: start a pristine, auth-enabled opencode, run the
+# suite with credentials, stop it.
 run_opencode_suite() {
   local out="$1"
   local home; home="$(mktemp -d)"
-  HOME="$home" opencode serve --port "$PORT" --hostname 127.0.0.1 >"$home/serve.log" 2>&1 &
+  HOME="$home" OPENCODE_SERVER_USERNAME="$OC_USER" OPENCODE_SERVER_PASSWORD="$OC_PASS" \
+    opencode serve --port "$PORT" --hostname 127.0.0.1 >"$home/serve.log" 2>&1 &
   local pid=$!
   if ! wait_health; then cat "$home/serve.log" >&2; kill -9 "$pid" 2>/dev/null || true; rm -rf "$home"; return 1; fi
-  ( cd "$REPO_ROOT" && go test ./conformance/ -run TestSuite -target="http://127.0.0.1:$PORT" -out="$out" >/dev/null )
+  ( cd "$REPO_ROOT" && go test ./conformance/ -run TestSuite \
+      -target="http://127.0.0.1:$PORT" -user="$OC_USER" -pass="$OC_PASS" -out="$out" >/dev/null )
   kill -9 "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -rf "$home"
@@ -51,7 +59,8 @@ case "$MODE" in
     FORGE_URL="${2:-http://127.0.0.1:4097}"
     echo "dual-run: opencode (truth) vs forge at $FORGE_URL"
     run_opencode_suite "$RESULTS/opencode.json"
-    ( cd "$REPO_ROOT" && go test ./conformance/ -run TestSuite -target="$FORGE_URL" -out="$RESULTS/forge.json" >/dev/null )
+    ( cd "$REPO_ROOT" && go test ./conformance/ -run TestSuite \
+        -target="$FORGE_URL" -user="$OC_USER" -pass="$OC_PASS" -out="$RESULTS/forge.json" >/dev/null )
     echo "=== diff ==="
     go run "$REPO_ROOT/conformance/cmd/diff" "$RESULTS/opencode.json" "$RESULTS/forge.json"
     ;;

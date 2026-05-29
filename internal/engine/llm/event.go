@@ -51,6 +51,11 @@ type Event struct {
 	Name  string         `json:"name,omitempty"`
 	Input map[string]any `json:"input,omitempty"`
 
+	// tool-result: the (already-serialized) tool output, for providers that
+	// resolve tools server-side or scripted mocks. The OpenAI client never emits
+	// this — its tool calls are executed by the processor's ToolExecutor.
+	Output string `json:"output,omitempty"`
+
 	// tool-input-delta: raw argument fragment.
 	Delta string `json:"delta,omitempty"`
 

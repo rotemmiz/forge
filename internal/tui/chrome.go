@@ -158,10 +158,13 @@ func humanInt(n int) string {
 }
 
 func truncate(s string, n int) string {
-	if n <= 0 || lipgloss.Width(s) <= n {
+	if n <= 0 { // no room — drop it rather than overflow the column
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	if n <= 1 {
+	if n == 1 {
 		return "…"
 	}
 	r := []rune(s)

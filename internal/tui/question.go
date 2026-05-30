@@ -85,17 +85,30 @@ func (m Model) handleQuestionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.qReplying = true
 		return m, rejectQuestionCmd(m.ctx, m.client, q.ID)
 	case "enter":
-		m.qAnswers = append(m.qAnswers, m.stepAnswer(info))
-		if m.qIdx+1 < len(q.Questions) { // advance to the next question
+		if len(info.Options) == 0 {
+			return m, nil // free-text-only question: can't answer here, only reject (r)
+		}
+		ans := m.stepAnswer(info)
+		if m.qIdx+1 < len(q.Questions) { // advance: record this step durably
+			m.qAnswers = append(m.qAnswers, ans)
 			m.qIdx++
 			m.qSel = 0
 			m.qChecked = nil
 			return m, nil
 		}
+		// Final step: build prior steps + this one WITHOUT mutating qAnswers, so a
+		// failed reply can be retried without double-appending the last answer.
 		m.qReplying = true
-		return m, replyQuestionCmd(m.ctx, m.client, q.ID, m.qAnswers)
+		return m, replyQuestionCmd(m.ctx, m.client, q.ID, m.finalAnswers(info))
 	}
 	return m, nil
+}
+
+// finalAnswers is the full answer array submitted at the last step: the durably
+// recorded prior steps plus the current step's selection (qAnswers is left
+// untouched so a failed reply retries cleanly).
+func (m Model) finalAnswers(info *QuestionInfo) [][]string {
+	return append(append([][]string{}, m.qAnswers...), m.stepAnswer(info))
 }
 
 // ensureChecked sizes the multi-select toggle slice to the current options.
@@ -166,9 +179,15 @@ func (m Model) questionView() string {
 			lines = append(lines, s.Base.Render("  "+row))
 		}
 	}
+	if len(info.Options) == 0 { // free-text-only question: not answerable here
+		lines = append(lines, s.Faint.Render("(free-text answers aren't supported — press r to reject)"))
+	}
 
 	hint := "↑↓ move · enter select · r reject"
-	if info.Multiple {
+	switch {
+	case len(info.Options) == 0:
+		hint = "r reject · esc reject"
+	case info.Multiple:
 		hint = "↑↓ move · space toggle · enter confirm · r reject"
 	}
 	if m.qReplying {

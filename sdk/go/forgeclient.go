@@ -3,6 +3,7 @@ package forgeclient
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,6 +108,28 @@ func (c *ForgeClient) Health(ctx context.Context) error {
 		return fmt.Errorf("health: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// GetJSON performs an authed GET on a path (relative to the base URL) and
+// decodes the JSON response into dst. It is a pragmatic escape hatch for reads
+// whose generated typed response is an awkward union (e.g. message lists);
+// callers that want typed requests use API directly.
+func (c *ForgeClient) GetJSON(ctx context.Context, path string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: status %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(dst)
 }
 
 // BaseURL returns the daemon base URL.

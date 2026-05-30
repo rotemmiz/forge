@@ -125,7 +125,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case connectedMsg:
 		m.conn, m.status, m.attempt = Connected, "connected", 0
-		return m, openSSECmd(m.ctx, m.client)
+		// Subscribe to events and bootstrap the session list in parallel.
+		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client))
+
+	case sessionsLoadedMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		for _, ss := range msg.sessions {
+			m.store.sessions = upsertSession(m.store.sessions, ss)
+		}
+		// Open the requested session, else the newest.
+		if m.cfg.SessionID == "" && len(msg.sessions) > 0 {
+			m.cfg.SessionID = msg.sessions[0].ID
+		}
+		if m.cfg.SessionID != "" {
+			m.screen = ScreenSession
+			return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
+		}
+		return m, nil
+
+	case messagesLoadedMsg:
+		if msg.err == nil {
+			m.store = m.store.ingestHistory(msg.sessionID, msg.items)
+		}
+		return m, nil
 
 	case connErrMsg:
 		m.conn, m.err = ConnError, msg.err
@@ -197,7 +221,4 @@ func (m Model) viewSplash() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
-func (m Model) viewSession() string {
-	// Filled in at U5 (the conversation stream).
-	return m.styles.Base.Render("session " + m.cfg.SessionID)
-}
+func (m Model) viewSession() string { return m.renderSession() }

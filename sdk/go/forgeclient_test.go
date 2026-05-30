@@ -133,3 +133,27 @@ func TestEventStream_CloseStops(t *testing.T) {
 	_ = readEvents(t, s, 1)
 	s.Close() // must not panic / deadlock
 }
+
+func TestGetJSON_DecodesAndSendsHeaders(t *testing.T) {
+	var gotAuth, gotDir, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotDir, gotAccept = r.Header.Get("Authorization"), r.Header.Get("X-Opencode-Directory"), r.Header.Get("Accept")
+		_, _ = io.WriteString(w, `[{"id":"ses_1","title":"T"}]`)
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, Options{Username: "u", Password: "p", Directory: "/d", HTTPClient: srv.Client()})
+
+	var out []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := c.GetJSON(context.Background(), "/session", &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != "ses_1" || out[0].Title != "T" {
+		t.Fatalf("decode wrong: %+v", out)
+	}
+	if gotAuth == "" || gotDir != "%2Fd" || gotAccept != "application/json" {
+		t.Fatalf("headers wrong: auth=%q dir=%q accept=%q", gotAuth, gotDir, gotAccept)
+	}
+}

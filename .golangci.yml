@@ -12,8 +12,12 @@ linters:
     - revive
   exclusions:
     rules:
-      # Generated oapi-codegen output (task S3) is not hand-maintained.
+      # Generated oapi-codegen output (task S3 / plan 06) is not hand-maintained.
       - path: internal/api/gen/
+        linters:
+          - revive
+          - staticcheck
+      - path: sdk/go/gen/
         linters:
           - revive
           - staticcheck

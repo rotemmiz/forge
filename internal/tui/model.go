@@ -220,7 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall

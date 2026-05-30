@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"sort"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -117,17 +116,21 @@ func (m Model) tasksDockView(width int) string {
 	}
 
 	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false). // top rule only
+		Border(lipgloss.NormalBorder(), true, false, false, false). // top rule only (no side columns)
 		BorderForeground(s.P.BorderSoft).
-		Width(width - 1).
+		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 }
 
 // isTodoWriteEvent reports whether an SSE event is a todowrite tool part update
-// (the signal to refetch todos, since there's no todo event).
+// (the signal to refetch todos, since there's no todo event). Decodes the typed
+// part rather than substring-matching the raw JSON.
 func isTodoWriteEvent(ev forgeclient.SSEEvent) bool {
 	if ev.Type != "message.part.updated" {
 		return false
 	}
-	return strings.Contains(string(ev.Properties), `"tool":"todowrite"`)
+	var p struct {
+		Part Part `json:"part"`
+	}
+	return decode(ev.Properties, &p) && p.Part.Type == "tool" && p.Part.Tool == "todowrite"
 }

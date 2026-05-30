@@ -66,7 +66,10 @@ type Model struct {
 	cancel     context.CancelFunc
 	stream     *forgeclient.EventStream
 	attempt    int // reconnect backoff attempt
-	eventCount int // events seen this connection (placeholder until the U4 store)
+	eventCount int // events seen this connection (status line)
+
+	// store mirrors the daemon state from the SSE stream.
+	store store
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -80,6 +83,7 @@ func New(cfg Config) Model {
 		status: "connecting to " + cfg.URL,
 		ctx:    ctx,
 		cancel: cancel,
+		store:  newStore(),
 	}
 	c, err := forgeclient.New(cfg.URL, forgeclient.Options{
 		Directory: cfg.Directory, Username: cfg.Username, Password: cfg.Password,
@@ -145,8 +149,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sseEventMsg:
 		m.eventCount++
-		m.status = fmt.Sprintf("connected · %d events", m.eventCount)
-		// U4 will reduce msg.ev into the store; for now just keep listening.
+		m.store = m.store.Reduce(msg.ev)
+		m.status = fmt.Sprintf("connected · %d events · %d sessions", m.eventCount, len(m.store.sessions))
 		return m, listenCmd(m.stream)
 
 	case sseClosedMsg:

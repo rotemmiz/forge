@@ -161,6 +161,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "create session failed: " + msg.err.Error()
 			return m, nil
 		}
+		if msg.session.ID == "" { // daemon returned 200 + {} or similar
+			m.status, m.modal = "create session: empty response", modalNone
+			return m, nil
+		}
 		m.store.sessions = upsertSession(m.store.sessions, msg.session)
 		m.cfg.SessionID, m.screen, m.modal = msg.session.ID, ScreenSession, modalNone
 		return m, nil
@@ -169,6 +173,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = "delete failed: " + msg.err.Error()
 			return m, nil
+		}
+		for _, dm := range m.store.messages[msg.id] { // drop the session's parts too
+			delete(m.store.parts, dm.ID)
 		}
 		m.store.sessions = removeSession(m.store.sessions, msg.id)
 		delete(m.store.messages, msg.id)

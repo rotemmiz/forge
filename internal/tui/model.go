@@ -85,6 +85,10 @@ type Model struct {
 
 	// choices is the connected provider/model catalog (model switcher).
 	choices []modelChoice
+
+	// Slash commands.
+	commands []slashItem  // daemon commands (GET /command)
+	ac       autocomplete // composer "/" popup state
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -163,6 +167,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modal != modalNone {
 			return m.handleModalKey(msg)
 		}
+		// The slash popup captures nav/accept/dismiss keys; other keys fall
+		// through so typing keeps filtering it.
+		if m.ac.open {
+			if handled, nm, cmd := m.handleAutocompleteKey(msg); handled {
+				return nm, cmd
+			}
+		}
 		switch msg.String() {
 		case "ctrl+p":
 			m.modal, m.modalSel = modalPalette, 0
@@ -173,7 +184,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Everything else goes to the composer (shift+enter / ctrl+j add a newline).
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		m = m.resizeComposer() // auto-grow to fit the new content
+		m = m.resizeComposer()      // auto-grow to fit the new content
+		m = m.refreshAutocomplete() // open/refresh the "/" popup
 		return m, cmd
 
 	case sessionOpenedMsg:
@@ -214,8 +226,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectedMsg:
 		m.conn, m.status, m.attempt = Connected, "connected", 0
 		// Subscribe to events, bootstrap the session list, resolve the model, and
-		// preload the provider catalog so the model switcher opens populated.
-		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client), loadConfigCmd(m.ctx, m.client), loadProvidersCmd(m.ctx, m.client))
+		// preload the provider + command catalogs so the switcher/slash popup open
+		// populated.
+		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client), loadConfigCmd(m.ctx, m.client), loadProvidersCmd(m.ctx, m.client), loadCommandsCmd(m.ctx, m.client))
 
 	case configLoadedMsg:
 		if !m.model.ok() {
@@ -236,6 +249,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case commandsLoadedMsg:
+		if msg.err == nil {
+			m.commands = msg.items
+		}
+		return m, nil
+
 	case sessionCreatedMsg:
 		if msg.err != nil {
 			m.status = "create session failed: " + msg.err.Error()
@@ -244,6 +263,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.store.sessions = upsertSession(m.store.sessions, msg.session)
 		m.cfg.SessionID = msg.session.ID
 		m.screen = ScreenSession
+		if msg.command != "" { // a "/command" created this session — run it
+			return m, runCommandCmd(m.ctx, m.client, msg.session.ID, msg.command, msg.arguments)
+		}
 		return m, promptCmd(m.ctx, m.client, msg.session.ID, msg.text, m.model)
 
 	case promptSentMsg:
@@ -433,6 +455,9 @@ func (m Model) viewSplash() string {
 	s := m.styles
 	wordmark := s.Base.Bold(true).Render("forge")
 	composer := m.composerView()
+	if ac := m.autocompleteView(); ac != "" {
+		composer = lipgloss.JoinVertical(lipgloss.Left, ac, composer)
+	}
 	status := s.Faint.Render(m.statusLine())
 	if m.err != nil {
 		status = lipgloss.NewStyle().Foreground(s.P.Red).Render(m.err.Error())

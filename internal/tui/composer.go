@@ -28,9 +28,11 @@ func (p promptModel) label() string {
 type (
 	promptSentMsg     struct{ err error }
 	sessionCreatedMsg struct {
-		session Session
-		text    string
-		err     error
+		session   Session
+		text      string // a prompt to send after creation, or…
+		command   string // …a daemon command to run after creation (with arguments)
+		arguments string
+		err       error
 	}
 	configLoadedMsg struct{ provider, model string }
 )

@@ -56,7 +56,32 @@ func TestSelectTail_ZeroTurnsDisabled(t *testing.T) {
 	}
 }
 
-func TestPrune_MarksOldToolOutputs(t *testing.T) {
+// seedToolTurn inserts a user turn plus an assistant message carrying one
+// completed tool part with the given output.
+func seedToolTurn(t *testing.T, store *message.Store, sid, uid, aid, output string, created int64) {
+	t.Helper()
+	ctx := context.Background()
+	u := &message.UserMessage{ID: uid, SessionID: sid, Role: message.RoleUser, Agent: "build"}
+	u.Time.Created = created
+	if err := store.PutMessage(ctx, message.Info{User: u}); err != nil {
+		t.Fatal(err)
+	}
+	a := &message.AssistantMessage{ID: aid, SessionID: sid, Role: message.RoleAssistant, ParentID: uid,
+		ProviderID: "openai", ModelID: "gpt-4o", Finish: "stop"}
+	a.Time.Created = created + 1
+	if err := store.PutMessage(ctx, message.Info{Assistant: a}); err != nil {
+		t.Fatal(err)
+	}
+	st := message.ToolStateCompleted{Status: message.ToolCompleted, Input: map[string]any{}, Output: output, Title: "Bash", Metadata: map[string]any{}}
+	st.Time.End = 1
+	state, _ := json.Marshal(st)
+	if err := store.PutPart(ctx, &message.ToolPart{
+		PartBase: message.PartBase{ID: "prt_" + aid, SessionID: sid, MessageID: aid}, Type: "tool", CallID: aid, Tool: "bash", State: state}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrune_MarksOldToolOutputsProtectsRecent(t *testing.T) {
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -71,32 +96,23 @@ func TestPrune_MarksOldToolOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := message.NewStore(db)
-	ctx := context.Background()
-	a := &message.AssistantMessage{ID: "msg_a", SessionID: sid, Role: message.RoleAssistant, ProviderID: "openai", ModelID: "gpt-4o"}
-	if err := store.PutMessage(ctx, message.Info{Assistant: a}); err != nil {
-		t.Fatal(err)
-	}
-	// 6 completed tool parts, ~15k tokens each (60k chars) -> 90k tokens total.
-	big := strings.Repeat("x", 60_000)
-	ids := []string{"prt_1", "prt_2", "prt_3", "prt_4", "prt_5", "prt_6"}
-	for _, pid := range ids {
-		st := message.ToolStateCompleted{Status: message.ToolCompleted, Input: map[string]any{}, Output: big, Title: "Bash", Metadata: map[string]any{}}
-		st.Time.End = 1
-		state, _ := json.Marshal(st)
-		if err := store.PutPart(ctx, &message.ToolPart{
-			PartBase: message.PartBase{ID: pid, SessionID: sid, MessageID: "msg_a"}, Type: "tool", CallID: pid, Tool: "bash", State: state}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	big := strings.Repeat("x", 100_000) // ~25k tokens each
 
-	eng := New(Config{Store: store})
-	eng.prune(ctx, sid)
+	// Four older turns with big tool outputs, then two recent small turns.
+	seedToolTurn(t, store, sid, "msg_01u", "msg_01a", big, 1)
+	seedToolTurn(t, store, sid, "msg_02u", "msg_02a", big, 3)
+	seedToolTurn(t, store, sid, "msg_03u", "msg_03a", big, 5)
+	seedToolTurn(t, store, sid, "msg_04u", "msg_04a", big, 7)
+	seedToolTurn(t, store, sid, "msg_05u", "msg_05a", "small", 9)
+	seedToolTurn(t, store, sid, "msg_06u", "msg_06a", "small", 11)
 
-	parts, _ := store.Parts(ctx, "msg_a")
-	var compacted, kept int
-	for _, p := range parts {
+	New(Config{Store: store}).prune(context.Background(), sid)
+
+	compacted, kept := 0, 0
+	for _, aid := range []string{"msg_01a", "msg_02a", "msg_03a", "msg_04a", "msg_05a", "msg_06a"} {
+		parts, _ := store.Parts(context.Background(), aid)
 		var st message.ToolStateCompleted
-		_ = json.Unmarshal(p.(*message.ToolPart).State, &st)
+		_ = json.Unmarshal(parts[0].(*message.ToolPart).State, &st)
 		if st.Time.Compacted != nil {
 			compacted++
 		} else {
@@ -104,9 +120,18 @@ func TestPrune_MarksOldToolOutputs(t *testing.T) {
 		}
 	}
 	if compacted == 0 {
-		t.Fatalf("expected some tool outputs pruned, got 0 (kept=%d)", kept)
+		t.Fatalf("expected old tool outputs pruned, got 0")
 	}
-	if kept == 0 {
-		t.Fatalf("prune must protect recent outputs, but pruned all")
+	if kept < 2 {
+		t.Fatalf("prune must protect recent turns, kept=%d", kept)
+	}
+	// The two most recent turns' outputs must NOT be pruned.
+	for _, aid := range []string{"msg_05a", "msg_06a"} {
+		parts, _ := store.Parts(context.Background(), aid)
+		var st message.ToolStateCompleted
+		_ = json.Unmarshal(parts[0].(*message.ToolPart).State, &st)
+		if st.Time.Compacted != nil {
+			t.Fatalf("%s (recent) must not be pruned", aid)
+		}
 	}
 }

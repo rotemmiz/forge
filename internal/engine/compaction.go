@@ -34,14 +34,27 @@ func (e *Engine) prune(ctx context.Context, sessionID string) {
 	if err != nil {
 		return
 	}
-	// Gather completed, not-yet-compacted tool parts in chronological order.
+	// Walk newest→oldest, collecting prunable tool parts. Protect the two most
+	// recent user turns and stop at a summary boundary (compaction.ts:312-330);
+	// older completed tool outputs become candidates.
 	type entry struct {
 		part   *message.ToolPart
 		state  message.ToolStateCompleted
 		tokens int
 	}
-	var entries []entry
-	for _, m := range msgs {
+	var cands []entry // newest→oldest order
+	turns := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if a := m.Info.Assistant; a != nil && a.Summary {
+			break // already-summarized history below this point
+		}
+		if m.Info.IsUser() {
+			turns++
+		}
+		if turns < 2 {
+			continue // protect the two most recent turns
+		}
 		for _, p := range m.Parts {
 			tp, ok := p.(*message.ToolPart)
 			if !ok || tp.Status() != message.ToolCompleted || tp.Tool == "skill" {
@@ -51,32 +64,30 @@ func (e *Engine) prune(ctx context.Context, sessionID string) {
 			if err := unmarshalState(tp.State, &st); err != nil || st.Time.Compacted != nil {
 				continue
 			}
-			entries = append(entries, entry{part: tp, state: st, tokens: estimateTokens(st.Output)})
+			cands = append(cands, entry{part: tp, state: st, tokens: estimateTokens(st.Output)})
 		}
 	}
-	// Walk newest→oldest, protecting pruneProtect tokens; older ones are candidates.
-	protected := 0
-	cutoff := len(entries)
-	for i := len(entries) - 1; i >= 0; i-- {
+	// Of the candidates (newest→oldest), protect pruneProtect tokens; prune the rest.
+	protected, cut := 0, len(cands)
+	for i := range cands {
 		if protected >= pruneProtect {
-			cutoff = i + 1
+			cut = i
 			break
 		}
-		protected += entries[i].tokens
-		cutoff = i
+		protected += cands[i].tokens
 	}
 	prunable := 0
-	for i := 0; i < cutoff; i++ {
-		prunable += entries[i].tokens
+	for i := cut; i < len(cands); i++ {
+		prunable += cands[i].tokens
 	}
 	if prunable <= pruneMinimum {
 		return
 	}
 	now := time.Now().UnixMilli()
-	for i := 0; i < cutoff; i++ {
-		entries[i].state.Time.Compacted = &now
-		entries[i].part.State = marshalState(entries[i].state)
-		_ = e.cfg.Store.PutPart(ctx, entries[i].part)
+	for i := cut; i < len(cands); i++ {
+		cands[i].state.Time.Compacted = &now
+		cands[i].part.State = marshalState(cands[i].state)
+		_ = e.cfg.Store.PutPart(ctx, cands[i].part)
 	}
 }
 
@@ -169,10 +180,14 @@ func (e *Engine) processCompaction(ctx context.Context, sessionID string, filter
 	}
 	head, tailStartID := selectTail(history, defaultTailTurns)
 	if len(head) == 0 {
-		// Not enough history to summarize: drop the compaction part so the task
-		// is cleared (it won't re-fire) and the loop proceeds normally.
-		_, _ = e.cfg.Store.DeletePart(ctx, part.ID)
-		return processor.OutcomeContinue
+		if len(history) == 0 {
+			// Truly nothing to summarize: clear the task so it can't re-fire.
+			_, _ = e.cfg.Store.DeletePart(ctx, part.ID)
+			return processor.OutcomeContinue
+		}
+		// Too few turns to keep a tail: summarize the ENTIRE history (no tail) so
+		// the summary still shrinks context (opencode: head=all, tail undefined).
+		head, tailStartID = history, ""
 	}
 
 	providerID := compactionUser.Model.ProviderID
@@ -204,15 +219,32 @@ func (e *Engine) processCompaction(ctx context.Context, sessionID string, filter
 	}
 	// No executor: the summary turn runs without tools.
 	proc := processor.New(processor.Config{Store: e.cfg.Store, Bus: e.cfg.Bus, Catalog: e.cfg.Catalog, SessionID: sessionID}, summary)
-	if outcome := proc.Run(ctx, events); outcome == processor.OutcomeStop && summary.Error != nil {
+	switch proc.Run(ctx, events) {
+	case processor.OutcomeStop:
+		if summary.Error != nil {
+			return processor.OutcomeStop
+		}
+	case processor.OutcomeCompact:
+		// The summary turn itself overflowed: the session can't be compacted
+		// further (compaction.ts:459-467). Mark it and stop.
+		now := time.Now().UnixMilli()
+		summary.Error = &message.Error{Name: "ContextOverflowError",
+			Data: map[string]any{"message": "Session too large to compact - context exceeds model limit"}}
+		summary.Finish = "error"
+		summary.Time.Completed = &now
+		_ = e.cfg.Store.PutMessage(ctx, message.Info{Assistant: summary})
+		e.emitAssistant(summary)
 		return processor.OutcomeStop
 	}
 
-	part.TailStartID = tailStartID
-	if err := e.cfg.Store.PutPart(ctx, part); err != nil {
-		return processor.OutcomeStop
+	// Record the tail anchor only when a tail was preserved (opencode parity).
+	if tailStartID != "" {
+		part.TailStartID = tailStartID
+		if err := e.cfg.Store.PutPart(ctx, part); err != nil {
+			return processor.OutcomeStop
+		}
+		e.emitPart(sessionID, part)
 	}
-	e.emitPart(sessionID, part)
 	if e.cfg.Bus != nil {
 		e.cfg.Bus.Publish(bus.NewEvent("session.compacted", map[string]any{"sessionID": sessionID}))
 	}
@@ -272,18 +304,30 @@ func hasCompactionPart(parts []message.Part) bool {
 	return false
 }
 
-// pendingCompaction returns the unprocessed compaction part on the given user
-// message within filtered (one whose tail_start_id is not yet set), or nil.
+// pendingCompaction returns the compaction part on the given user message if it
+// has NOT yet been processed — i.e. no finished summary assistant is anchored to
+// it. Keying off the summary (not tail_start_id) mirrors opencode's task
+// detection and is correct even when the whole history is summarized with no
+// preserved tail (tail_start_id stays empty).
 func pendingCompaction(filtered []message.WithParts, userID string) *message.CompactionPart {
+	var cp *message.CompactionPart
 	for _, m := range filtered {
 		if m.Info.ID() != userID {
 			continue
 		}
 		for _, p := range m.Parts {
-			if c, ok := p.(*message.CompactionPart); ok && c.TailStartID == "" {
-				return c
+			if c, ok := p.(*message.CompactionPart); ok {
+				cp = c
 			}
 		}
 	}
-	return nil
+	if cp == nil {
+		return nil
+	}
+	for _, m := range filtered {
+		if a := m.Info.Assistant; a != nil && a.Summary && a.Finish != "" && a.ParentID == userID {
+			return nil
+		}
+	}
+	return cp
 }

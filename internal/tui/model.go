@@ -325,6 +325,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case revertedMsg:
+		if msg.err != nil {
+			m.status = "revert failed: " + msg.err.Error()
+		} else {
+			m.status = "reverted"
+		}
+		return m, nil
+
 	case sessionsLoadedMsg:
 		if msg.err != nil {
 			return m, nil

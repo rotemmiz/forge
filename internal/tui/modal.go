@@ -20,6 +20,8 @@ const (
 	modalModels
 	modalAgents
 	modalThemes
+	modalTimeline
+	modalStatus
 )
 
 // paletteAction identifies a command-palette entry (dispatched by id, not index,
@@ -32,6 +34,8 @@ const (
 	paSwitchModel
 	paSwitchAgent
 	paSwitchTheme
+	paTimeline
+	paStatus
 	paRefresh
 )
 
@@ -47,6 +51,8 @@ var paletteItems = []paletteCmd{
 	{"Switch model", paSwitchModel},
 	{"Switch agent", paSwitchAgent},
 	{"Switch theme", paSwitchTheme},
+	{"Timeline", paTimeline},
+	{"Status", paStatus},
 	{"Refresh sessions", paRefresh},
 }
 
@@ -141,6 +147,19 @@ func (m Model) modalItems() (title string, rows []string, footer string) {
 			rows = append(rows, mark+n.Name)
 		}
 		return "Themes", rows, "enter select · esc close"
+	case modalTimeline:
+		for _, it := range m.timelineItems() {
+			rows = append(rows, truncate(it.title, 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no turns yet)"}
+		}
+		return "Timeline", rows, "enter revert here · esc close"
+	case modalStatus:
+		for _, line := range m.statusLines() {
+			rows = append(rows, truncate(line, 52)) // keep within the panel
+		}
+		return "Status", rows, "esc close"
 	default:
 		return "", nil, ""
 	}
@@ -182,6 +201,12 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		case paSwitchTheme:
 			m.modal, m.modalSel = modalThemes, m.themeSelIndex()
 			return m, nil
+		case paTimeline:
+			m.modal, m.modalSel = modalTimeline, 0
+			return m, nil
+		case paStatus:
+			m.modal, m.modalSel = modalStatus, 0
+			return m, nil
 		case paRefresh:
 			return m, loadSessionsCmd(m.ctx, m.client)
 		}
@@ -211,6 +236,15 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 			m = m.applyTheme(ps[m.modalSel].Name, ps[m.modalSel].Palette)
 			m.status = "theme · " + m.themeName
 		}
+	case modalTimeline:
+		items := m.timelineItems()
+		m.modal = modalNone
+		if m.modalSel < len(items) {
+			m.status = "reverting…"
+			return m, revertCmd(m.ctx, m.client, m.cfg.SessionID, items[m.modalSel].messageID)
+		}
+	case modalStatus:
+		m.modal = modalNone // read-only — enter just closes
 	}
 	return m, nil
 }

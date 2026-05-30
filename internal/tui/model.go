@@ -91,9 +91,11 @@ type Model struct {
 	ac       autocomplete // composer "/" popup state
 
 	// Chrome.
-	agent         string // active agent (status bar "mode"); empty → default
-	sidebarHidden bool   // right sidebar visibility (toggle: ctrl+x b)
-	streamWidth   int    // transient: stream column width when the sidebar is shown
+	agent         string      // active agent (status bar "mode"); empty → default
+	agents        []agentItem // selectable agents (GET /agent)
+	themeName     string      // active theme name (theme switcher)
+	sidebarHidden bool        // right sidebar visibility (toggle: ctrl+x b)
+	streamWidth   int         // transient: stream column width when the sidebar is shown
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -112,16 +114,17 @@ func New(cfg Config) Model {
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	ta.Focus()
 	m := Model{
-		cfg:    cfg,
-		styles: theme.DefaultStyles(),
-		screen: ScreenSplash,
-		conn:   Connecting,
-		status: "connecting to " + cfg.URL,
-		ctx:    ctx,
-		cancel: cancel,
-		store:  newStore(),
-		input:  ta,
-		model:  promptModel{Provider: cfg.Provider, Model: cfg.Model},
+		cfg:       cfg,
+		styles:    theme.DefaultStyles(),
+		screen:    ScreenSplash,
+		conn:      Connecting,
+		status:    "connecting to " + cfg.URL,
+		ctx:       ctx,
+		cancel:    cancel,
+		store:     newStore(),
+		input:     ta,
+		model:     promptModel{Provider: cfg.Provider, Model: cfg.Model},
+		themeName: theme.Palettes()[0].Name, // forge-dark
 	}
 	c, err := forgeclient.New(cfg.URL, forgeclient.Options{
 		Directory: cfg.Directory, Username: cfg.Username, Password: cfg.Password,
@@ -237,7 +240,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Subscribe to events, bootstrap the session list, resolve the model, and
 		// preload the provider + command catalogs so the switcher/slash popup open
 		// populated.
-		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client), loadConfigCmd(m.ctx, m.client), loadProvidersCmd(m.ctx, m.client), loadCommandsCmd(m.ctx, m.client))
+		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client), loadConfigCmd(m.ctx, m.client), loadProvidersCmd(m.ctx, m.client), loadCommandsCmd(m.ctx, m.client), loadAgentsCmd(m.ctx, m.client))
 
 	case configLoadedMsg:
 		if !m.model.ok() {
@@ -264,6 +267,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentsLoadedMsg:
+		if msg.err != nil {
+			if m.modal == modalAgents {
+				m.status = "agents: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.agents = msg.items
+		if m.modal == modalAgents { // re-highlight the active agent now the list is in
+			m.modalSel = m.agentSelIndex()
+		}
+		return m, nil
+
 	case sessionCreatedMsg:
 		if msg.err != nil {
 			m.status = "create session failed: " + msg.err.Error()
@@ -275,7 +291,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.command != "" { // a "/command" created this session — run it
 			return m, runCommandCmd(m.ctx, m.client, msg.session.ID, msg.command, msg.arguments)
 		}
-		return m, promptCmd(m.ctx, m.client, msg.session.ID, msg.text, m.model)
+		return m, promptCmd(m.ctx, m.client, msg.session.ID, msg.text, m.model, m.agent)
 
 	case promptSentMsg:
 		if msg.err != nil {
@@ -444,7 +460,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if m.cfg.SessionID == "" {
 		return m, createSessionCmd(m.ctx, m.client, text)
 	}
-	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model)
+	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model, m.agent)
 }
 
 // View renders the active screen (or the command overlay when one is open).

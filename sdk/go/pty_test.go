@@ -37,11 +37,11 @@ func ptyMux(t *testing.T) *http.ServeMux {
 		}
 		defer func() { _ = c.Close(websocket.StatusNormalClosure, "") }()
 		ctx := r.Context()
-		_ = c.Write(ctx, websocket.MessageBinary, []byte("hello"))
+		_ = c.Write(ctx, websocket.MessageText, []byte("hello")) // opencode sends data as TEXT
 		meta, _ := json.Marshal(map[string]int{"cursor": 5})
 		_ = c.Write(ctx, websocket.MessageBinary, append([]byte{0x00}, meta...)) // control frame
 		if _, in, err := c.Read(ctx); err == nil {
-			_ = c.Write(ctx, websocket.MessageBinary, append([]byte("echo:"), in...))
+			_ = c.Write(ctx, websocket.MessageText, append([]byte("echo:"), in...))
 		}
 		time.Sleep(50 * time.Millisecond)
 	})

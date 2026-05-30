@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -106,7 +107,9 @@ func (p *PTYConn) Cursor() <-chan int { return p.cursor }
 func (p *PTYConn) Err() <-chan error { return p.errc }
 
 // ConnectPTY dials the PTY WebSocket. cursor resumes from a byte offset (0 from
-// the start, -1 for live-only / no replay).
+// the start, -1 for live-only / no replay). The returned PTYConn owns a read
+// goroutine that lives until Close — cancelling ctx aborts only the dial, not the
+// stream, so callers MUST Close (and keep draining Output until then).
 func (c *ForgeClient) ConnectPTY(ctx context.Context, id string, cursor int) (*PTYConn, error) {
 	ticket, err := c.connectToken(ctx, id)
 	if err != nil {
@@ -156,17 +159,19 @@ func (c *ForgeClient) ConnectPTY(ctx context.Context, id string, cursor int) (*P
 	return p, nil
 }
 
-// read pumps frames: a 0x00-prefixed binary frame is the {cursor} control frame;
-// everything else is terminal output.
+// read pumps frames. opencode sends terminal output as TEXT frames and the
+// {cursor} control frame as a BINARY frame prefixed with 0x00 (its web client
+// discriminates on the message type, not just the first byte). Match that so a
+// text chunk that happens to start with NUL isn't misread as control.
 func (p *PTYConn) read(ctx context.Context) {
 	defer close(p.output)
 	for {
-		_, data, err := p.ws.Read(ctx)
+		typ, data, err := p.ws.Read(ctx)
 		if err != nil {
 			p.errc <- err
 			return
 		}
-		if len(data) > 0 && data[0] == 0x00 { // control frame: 0x00 + JSON {cursor}
+		if typ == websocket.MessageBinary && len(data) > 0 && data[0] == 0x00 { // control: 0x00 + JSON {cursor}
 			var meta struct {
 				Cursor int `json:"cursor"`
 			}
@@ -221,6 +226,7 @@ func (c *ForgeClient) putJSON(ctx context.Context, path string, body any) error 
 		return fmt.Errorf("PUT %s: %w", path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("PUT %s: status %d", path, resp.StatusCode)
 	}

@@ -45,11 +45,16 @@ type converter struct {
 	nullUnion    int
 	prefixItems  int
 	renamed      []string
+	// clientMode enables disambiguating component schemas whose Go name collides
+	// with a generated "<OperationId>Response" client wrapper (only the client
+	// generator emits those wrappers, so the server derived spec leaves it off).
+	clientMode bool
 }
 
 func main() {
 	in := flag.String("in", "", "path to the OpenAPI 3.1 reference (input)")
 	out := flag.String("out", "", "path to write the derived 3.0 spec (output)")
+	client := flag.Bool("client", false, "also disambiguate schema names that collide with client <OperationId>Response wrappers")
 	flag.Parse()
 	if *in == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "usage: downconvert -in <3.1.json> -out <3.0.json>")
@@ -65,7 +70,7 @@ func main() {
 		fatal(fmt.Errorf("parse %s: %w", *in, err))
 	}
 
-	c := &converter{}
+	c := &converter{clientMode: *client}
 	doc = c.run(doc)
 
 	b, err := json.MarshalIndent(doc, "", "  ")
@@ -96,10 +101,67 @@ func (c *converter) run(doc any) any {
 		if comps, ok := m["components"].(map[string]any); ok {
 			if schemas, ok := comps["schemas"].(map[string]any); ok {
 				c.disambiguateSchemaNames(schemas)
+				if c.clientMode {
+					c.disambiguateResponseCollisions(schemas, operationIDs(m))
+				}
 			}
 		}
 	}
 	return doc
+}
+
+// operationIDs collects every operationId declared in the document's paths.
+func operationIDs(doc map[string]any) []string {
+	var ids []string
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		return ids
+	}
+	for _, item := range paths {
+		ops, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, op := range ops {
+			if o, ok := op.(map[string]any); ok {
+				if id, ok := o["operationId"].(string); ok && id != "" {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	return ids
+}
+
+// disambiguateResponseCollisions injects x-go-name on any component schema whose
+// effective Go name equals a generated client wrapper name ("<OperationId>Go" +
+// "Response"). oapi-codegen would otherwise redeclare the type. Only the wire Go
+// identifier changes; $ref keys (and thus the JSON shape) are untouched.
+func (c *converter) disambiguateResponseCollisions(schemas map[string]any, opIDs []string) {
+	wrappers := make(map[string]bool, len(opIDs))
+	for _, id := range opIDs {
+		wrappers[goApprox(id)+"Response"] = true
+	}
+	names := make([]string, 0, len(schemas))
+	for name := range schemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		sm, ok := schemas[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		eff := goApprox(name)
+		if x, ok := sm["x-go-name"].(string); ok && x != "" {
+			eff = x
+		}
+		if wrappers[eff] {
+			renamed := eff + "Schema"
+			sm["x-go-name"] = renamed
+			c.renamed = append(c.renamed, fmt.Sprintf("%s -> %s (response-wrapper collision)", name, renamed))
+		}
+	}
 }
 
 // transform walks the JSON tree applying the 3.1→3.0 schema rewrites in place.

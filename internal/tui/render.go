@@ -28,6 +28,9 @@ func (m Model) renderSession() string {
 	if ac := m.autocompleteView(); ac != "" {
 		footer = ac + "\n" + footer // popup sits just above the composer
 	}
+	if dock := m.tasksDockView(leftW); dock != "" {
+		footer = dock + "\n" + footer // tasks dock above the composer area
+	}
 
 	sid := m.cfg.SessionID
 	header := s.Section.Render(m.sessionTitle(sid))

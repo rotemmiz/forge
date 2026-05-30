@@ -106,6 +106,8 @@ type Model struct {
 	sidebarHidden bool        // right sidebar visibility (toggle: ctrl+x b)
 	streamWidth   int         // transient: stream column width when the sidebar is shown
 	leader        bool        // ctrl+x leader pressed, awaiting the chord key
+	tasksOpen     bool        // tasks dock visibility (toggle: ctrl+x t)
+	todos         []Todo      // current session's todos (tasks dock)
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -218,7 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall
@@ -410,6 +412,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.store = m.store.ingestHistory(msg.sessionID, msg.items)
 		}
+		m.todos = nil // todos are per-session; refetch for the opened one if the dock is up
+		if m.tasksOpen && m.cfg.SessionID != "" {
+			return m, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID)
+		}
 		return m, nil
 
 	case connErrMsg:
@@ -440,7 +446,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.resetQuestion()
 		}
 		m.status = fmt.Sprintf("connected · %d events · %d sessions", m.eventCount, len(m.store.sessions))
+		// A todowrite tool part changed the todos — refetch (no todo SSE event).
+		if m.tasksOpen && m.cfg.SessionID != "" && isTodoWriteEvent(msg.ev) {
+			return m, tea.Batch(listenCmd(m.stream), loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
+		}
 		return m, listenCmd(m.stream)
+
+	case todosLoadedMsg:
+		if msg.err == nil && msg.sessionID == m.cfg.SessionID {
+			m.todos = msg.todos
+		}
+		return m, nil
 
 	case sseClosedMsg:
 		if m.stream != nil {
@@ -565,6 +581,12 @@ func (m Model) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "b":
 		m.sidebarHidden = !m.sidebarHidden
 		return m.resizeComposer(), nil // width changed → re-fit the composer
+	case "t":
+		m.tasksOpen = !m.tasksOpen
+		if m.tasksOpen {
+			return m, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID)
+		}
+		return m, nil
 	}
 	return m, nil
 }

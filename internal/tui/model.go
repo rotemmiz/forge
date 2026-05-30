@@ -89,6 +89,11 @@ type Model struct {
 	// Slash commands.
 	commands []slashItem  // daemon commands (GET /command)
 	ac       autocomplete // composer "/" popup state
+
+	// Chrome.
+	agent         string // active agent (status bar "mode"); empty → default
+	sidebarHidden bool   // right sidebar visibility (toggle: ctrl+x b)
+	streamWidth   int    // transient: stream column width when the sidebar is shown
 }
 
 // New builds the initial Model, constructing the SDK client.

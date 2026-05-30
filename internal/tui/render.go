@@ -163,6 +163,9 @@ func (m Model) statusLine() string {
 
 func (m Model) frame(body string) string {
 	footer := m.composerView() + "\n" + m.styles.Faint.Render(m.statusLine())
+	if ac := m.autocompleteView(); ac != "" {
+		footer = ac + "\n" + footer // popup sits just above the composer
+	}
 	if m.height <= 0 {
 		return body + "\n" + footer
 	}

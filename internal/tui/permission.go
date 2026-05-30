@@ -54,7 +54,7 @@ func replyPermissionCmd(ctx context.Context, c *forgeclient.ForgeClient, id, rep
 // selection, and a/s/r are shortcuts (allow once / allow always / reject).
 func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	p := m.pendingPermission()
-	if p == nil {
+	if p == nil || m.permReplying { // ignore keys while a reply is in flight
 		return m, nil
 	}
 	switch msg.String() {
@@ -80,11 +80,12 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// replyPermission sends the reply and optimistically clears the request so the
-// overlay closes immediately (the permission.replied event also clears it).
+// replyPermission sends the reply. The request is NOT removed yet: the overlay
+// stays up through the round-trip so a failed POST can't silently drop a request
+// the daemon is still blocked on — it's cleared on success (or by the
+// permission.replied SSE event).
 func (m Model) replyPermission(id, reply string) (tea.Model, tea.Cmd) {
-	m.store.permissions = removeByID(m.store.permissions, id, func(q Permission) string { return q.ID })
-	m.permSel = 0
+	m.permReplying = true
 	return m, replyPermissionCmd(m.ctx, m.client, id, reply)
 }
 
@@ -111,7 +112,11 @@ func (m Model) permissionView() string {
 			lines = append(lines, s.Base.Render("  "+c.label))
 		}
 	}
-	lines = append(lines, "", s.Faint.Render("a allow · s always · r reject · enter select"))
+	hint := "a allow · s always · r reject · enter select"
+	if m.permReplying {
+		hint = "sending…"
+	}
+	lines = append(lines, "", s.Faint.Render(hint))
 
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

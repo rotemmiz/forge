@@ -52,15 +52,32 @@ func TestPermission_OverlayBlocksAndReplies(t *testing.T) {
 	if m.input.Value() != "" {
 		t.Fatal("keys should not reach the composer while a permission is pending")
 	}
-	// enter replies with the selected choice (default: allow once) and clears it
-	next, cmd := step(t, m, key("enter"))
+	// enter dispatches a reply; the overlay STAYS up (no optimistic clear) until
+	// the reply resolves — a failed POST must not silently drop a blocked request.
+	m, cmd := step(t, m, key("enter"))
 	if cmd == nil {
 		t.Fatal("enter should dispatch a reply")
 	}
-	if next.pendingPermission() != nil {
-		t.Fatal("replying should optimistically clear the permission")
+	if m.pendingPermission() == nil || !m.permReplying {
+		t.Fatal("overlay should stay up (replying) until the reply resolves")
+	}
+	// failure keeps the request so the user can retry
+	mFail, _ := step(t, m, permissionRepliedMsg{id: "perm_1", err: errTest})
+	if mFail.pendingPermission() == nil || mFail.permReplying {
+		t.Fatal("a failed reply should keep the request and clear the replying flag")
+	}
+	// success clears it
+	mOK, _ := step(t, m, permissionRepliedMsg{id: "perm_1"})
+	if mOK.pendingPermission() != nil {
+		t.Fatal("a successful reply should clear the permission")
 	}
 }
+
+var errTest = errTestType("boom")
+
+type errTestType string
+
+func (e errTestType) Error() string { return string(e) }
 
 func TestPermission_ShortcutKeys(t *testing.T) {
 	mk := func() Model {

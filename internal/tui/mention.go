@@ -63,12 +63,17 @@ func findFilesCmd(ctx context.Context, c *forgeclient.ForgeClient, query string)
 // acceptMention replaces the trailing "@token" with the selected "@path " so the
 // daemon resolves it to a file part.
 func (m Model) acceptMention() Model {
+	v := m.input.Value()
+	// Don't trust the open state alone — only edit when there's a live @token.
 	if m.ac.sel >= len(m.ac.files) {
 		m.ac = autocomplete{}
 		return m
 	}
+	if _, ok := mentionQuery(v); !ok {
+		m.ac = autocomplete{}
+		return m
+	}
 	path := m.ac.files[m.ac.sel]
-	v := m.input.Value()
 	if i := strings.LastIndex(v, "@"); i >= 0 {
 		v = v[:i] + "@" + path + " "
 	}

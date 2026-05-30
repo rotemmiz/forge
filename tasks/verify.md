@@ -369,3 +369,21 @@ are the `[ ]` notes above (deferred edges) + the deferred live PTY WS conformanc
       (`body.(root): len 22 != len 25`) — recorded fixtures are stale vs the current Forge session
       JSON (3 extra fields). Present on `main` before the TUI work. Re-record the session fixtures
       to make the self-conformance gate green.
+
+## Phase 2 complete — TUI chrome + navigation (2026-05-30, PRs #19–#22)
+Eyeball these against a daemon (`pnpm --filter @forge/tui start` or the forge-tui binary):
+- [ ] STATUS BAR (#19): bottom bar shows `mode · model` left, connection dot + tokens/cost + `ctrl+p commands` right.
+- [ ] SIDEBAR (#19): on a ≥80-col session screen, right sidebar shows title + CONTEXT (tokens, cost) + dir + Forge tag; `ctrl+x b` toggles it; the composer never bleeds into it.
+- [ ] MODELS/SESSIONS (#14/#15): `ctrl+p` palette + `/models` `/sessions`, windowed lists.
+- [ ] AGENTS (#20): `/agents` or `ctrl+x a` → pick build/plan/explore/general (● current); status mode updates; next prompt runs under it. Internal agents (compaction/summary/title) are hidden.
+- [ ] THEMES (#20): `/themes` → forge-dark / forge-light / monochrome; the WHOLE screen (incl. composer + background) repaints legibly — verify forge-light is readable on a dark terminal.
+- [ ] TIMELINE (#21): `/timeline` or `ctrl+x g` → lists your turns; enter reverts the session to before that turn (reversible via opencode /unrevert — not yet UI-exposed).
+- [ ] STATUS MODAL (#21): `/status` or `ctrl+x s` → daemon/state/dir/model/agent/theme/events/sessions/session-id.
+- [ ] SLASH (#18): `/` opens command popup; tab completes; enter runs builtin or daemon command.
+- [ ] @-MENTION (#22): type `@mod` → file picker (GET /find/file); tab/enter inserts `@path `; daemon resolves it to a file part in the prompt.
+- [ ] LEADER (#22): `ctrl+x` shows the chord hint; l/n/m/a/g/s/p/b dispatch.
+
+## Phase 2 known follow-ups (not blockers)
+- [ ] No-confirm revert matches opencode but a UI `unrevert`/undo affordance would be safer (Phase 3).
+- [ ] @-mention has no debounce (one GET /find/file per keystroke) — fine for local daemon, revisit for remote.
+- [ ] Sidebar has no context-% bar / LSP block yet (needs model context limits wired).

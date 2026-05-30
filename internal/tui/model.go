@@ -375,8 +375,9 @@ func (m Model) resizeComposer() Model {
 // visualRows estimates how many rows text occupies once soft-wrapped at cols
 // columns: the sum over logical (newline-separated) lines of ceil(width/cols),
 // each line at least one row. Display width (not byte length) so wide runes
-// count correctly. This approximates the textarea's word-wrap closely enough
-// for auto-grow; off-by-one at a word boundary is harmless.
+// count correctly. Char-wrap vs the textarea's word-wrap means this only ever
+// UNDERestimates (by a row for word boundaries, exact-fit lines, or tabs) —
+// never over — so the box is at worst one row short, never padded with blanks.
 func visualRows(text string, cols int) int {
 	if cols < 1 {
 		cols = 1

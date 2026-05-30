@@ -26,7 +26,20 @@ func (e *Engine) runLoop(ctx context.Context, sessionID string) (message.WithPar
 		}
 		filtered := message.FilterCompacted(msgs)
 		latest := message.LatestOf(filtered)
-		if latest.User == nil || e.shouldExit(latest) {
+		if latest.User == nil {
+			break
+		}
+
+		// A pending compaction task is processed before any normal turn or the
+		// exit check (prompt.ts:1310-1329).
+		if cp := pendingCompaction(filtered, latest.User.ID); cp != nil {
+			if e.processCompaction(ctx, sessionID, filtered, latest.User, cp) == processor.OutcomeStop {
+				return e.finalAssistant(ctx, sessionID), nil
+			}
+			continue
+		}
+
+		if e.shouldExit(latest) {
 			break
 		}
 
@@ -69,12 +82,17 @@ func (e *Engine) runLoop(ctx context.Context, sessionID string) (message.WithPar
 		case processor.OutcomeStop:
 			return e.withParts(ctx, assistant), nil
 		case processor.OutcomeCompact:
-			// Compaction is wired in M10; until then, stop cleanly rather than spin.
-			return e.withParts(ctx, assistant), nil
+			// Context overflowed: enqueue an auto-compaction task; the next
+			// iteration summarizes the head and resumes (compaction.ts).
+			if err := e.createCompaction(ctx, sessionID, latest.User.Model, latest.User.Agent, true); err != nil {
+				return e.withParts(ctx, assistant), err
+			}
+			continue
 		default: // OutcomeContinue
 			continue
 		}
 	}
+	e.prune(ctx, sessionID)
 	return e.finalAssistant(ctx, sessionID), nil
 }
 

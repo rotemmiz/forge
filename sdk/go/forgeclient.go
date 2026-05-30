@@ -1,8 +1,10 @@
 package forgeclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,6 +107,67 @@ func (c *ForgeClient) Health(ctx context.Context) error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// GetJSON performs an authed GET on a path (relative to the base URL) and
+// decodes the JSON response into dst. It is a pragmatic escape hatch for reads
+// whose generated typed response is an awkward union (e.g. message lists);
+// callers that want typed requests use API directly.
+func (c *ForgeClient) GetJSON(ctx context.Context, path string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
+		return fmt.Errorf("GET %s: status %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// PostJSON performs an authed POST of a JSON body to a path and, if dst is
+// non-nil and the response carries a body, decodes the JSON response into it.
+// Empty/204 responses are tolerated.
+func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) error {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, rdr)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
+		return fmt.Errorf("POST %s: status %d", path, resp.StatusCode)
+	}
+	if dst == nil || resp.StatusCode == http.StatusNoContent {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil && err != io.EOF {
+		return err
 	}
 	return nil
 }

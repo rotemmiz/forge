@@ -6,7 +6,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -45,6 +47,8 @@ type Config struct {
 	SessionID string
 	Username  string
 	Password  string
+	Provider  string // prompt model provider id (else resolved from /config)
+	Model     string // prompt model id
 }
 
 // Model is the Bubble Tea application state.
@@ -66,12 +70,23 @@ type Model struct {
 	cancel     context.CancelFunc
 	stream     *forgeclient.EventStream
 	attempt    int // reconnect backoff attempt
-	eventCount int // events seen this connection (placeholder until the U4 store)
+	eventCount int // events seen this connection (status line)
+
+	// store mirrors the daemon state from the SSE stream.
+	store store
+
+	// Composer.
+	input textinput.Model
+	model promptModel
 }
 
 // New builds the initial Model, constructing the SDK client.
 func New(cfg Config) Model {
 	ctx, cancel := context.WithCancel(context.Background())
+	ti := textinput.New()
+	ti.Placeholder = "Ask anything…"
+	ti.Prompt = ""
+	ti.Focus()
 	m := Model{
 		cfg:    cfg,
 		styles: theme.DefaultStyles(),
@@ -80,6 +95,9 @@ func New(cfg Config) Model {
 		status: "connecting to " + cfg.URL,
 		ctx:    ctx,
 		cancel: cancel,
+		store:  newStore(),
+		input:  ti,
+		model:  promptModel{Provider: cfg.Provider, Model: cfg.Model},
 	}
 	c, err := forgeclient.New(cfg.URL, forgeclient.Options{
 		Directory: cfg.Directory, Username: cfg.Username, Password: cfg.Password,
@@ -109,7 +127,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			if m.stream != nil {
 				m.stream.Close()
 			}
@@ -117,11 +135,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel() // cancel any in-flight health/open cmd + SDK work
 			}
 			return m, tea.Quit
+		case "enter":
+			return m.submit()
 		}
+		// Everything else goes to the composer.
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 
 	case connectedMsg:
 		m.conn, m.status, m.attempt = Connected, "connected", 0
-		return m, openSSECmd(m.ctx, m.client)
+		// Subscribe to events, bootstrap the session list, resolve the model.
+		return m, tea.Batch(openSSECmd(m.ctx, m.client), loadSessionsCmd(m.ctx, m.client), loadConfigCmd(m.ctx, m.client))
+
+	case configLoadedMsg:
+		if !m.model.ok() {
+			m.model = promptModel{Provider: msg.provider, Model: msg.model}
+		}
+		return m, nil
+
+	case sessionCreatedMsg:
+		if msg.err != nil {
+			m.status = "create session failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		m.cfg.SessionID = msg.session.ID
+		m.screen = ScreenSession
+		return m, promptCmd(m.ctx, m.client, msg.session.ID, msg.text, m.model)
+
+	case promptSentMsg:
+		if msg.err != nil {
+			m.status = "prompt failed: " + msg.err.Error()
+		}
+		return m, nil
+
+	case sessionsLoadedMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		for _, ss := range msg.sessions {
+			m.store.sessions = upsertSession(m.store.sessions, ss)
+		}
+		// Open the requested session, else the newest.
+		if m.cfg.SessionID == "" && len(msg.sessions) > 0 {
+			m.cfg.SessionID = msg.sessions[0].ID
+		}
+		if m.cfg.SessionID != "" {
+			m.screen = ScreenSession
+			return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
+		}
+		return m, nil
+
+	case messagesLoadedMsg:
+		if msg.err == nil {
+			m.store = m.store.ingestHistory(msg.sessionID, msg.items)
+		}
+		return m, nil
 
 	case connErrMsg:
 		m.conn, m.err = ConnError, msg.err
@@ -145,8 +215,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sseEventMsg:
 		m.eventCount++
-		m.status = fmt.Sprintf("connected · %d events", m.eventCount)
-		// U4 will reduce msg.ev into the store; for now just keep listening.
+		m.store = m.store.Reduce(msg.ev)
+		m.status = fmt.Sprintf("connected · %d events · %d sessions", m.eventCount, len(m.store.sessions))
 		return m, listenCmd(m.stream)
 
 	case sseClosedMsg:
@@ -166,6 +236,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// submit sends the composer's text: it creates a session first if none is open,
+// then prompts. Requires a resolved model.
+func (m Model) submit() (tea.Model, tea.Cmd) {
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		return m, nil
+	}
+	if !m.model.ok() {
+		m.status = "no model configured (pass --provider/--model)"
+		return m, nil
+	}
+	m.input.SetValue("")
+	if m.cfg.SessionID == "" {
+		return m, createSessionCmd(m.ctx, m.client, text)
+	}
+	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model)
+}
+
 // View renders the active screen.
 func (m Model) View() string {
 	switch m.screen {
@@ -176,24 +264,22 @@ func (m Model) View() string {
 	}
 }
 
-// viewSplash renders the wordmark + connection status, centered.
+// viewSplash renders the wordmark, the composer, and the connection status.
 func (m Model) viewSplash() string {
 	s := m.styles
 	wordmark := s.Base.Bold(true).Render("forge")
-	status := s.Faint.Render(m.status)
+	composer := m.composerView()
+	status := s.Faint.Render(m.statusLine())
 	if m.err != nil {
 		status = lipgloss.NewStyle().Foreground(s.P.Red).Render(m.err.Error())
 	}
-	hint := s.Faint.Render("q quit")
+	hint := s.Faint.Render("enter send · ctrl+c quit")
 
-	body := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", status, "", hint)
+	body := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", composer, "", hint, "", status)
 	if m.width == 0 || m.height == 0 {
 		return body
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
 }
 
-func (m Model) viewSession() string {
-	// Filled in at U5 (the conversation stream).
-	return m.styles.Base.Render("session " + m.cfg.SessionID)
-}
+func (m Model) viewSession() string { return m.renderSession() }

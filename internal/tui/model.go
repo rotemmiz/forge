@@ -356,8 +356,13 @@ const maxComposerRows = 8
 
 // resizeComposer sets the composer's width to the content column and grows its
 // height to fit the current text (clamped to [1, maxComposerRows]).
+//
+// Height tracks LineCount, which is logical (newline-separated) lines, not
+// wrapped visual rows — so a single very long line stays one row and scrolls
+// inside the box rather than growing. Explicit newlines (the common multi-line
+// case) grow it as expected. True wrapped-height auto-grow is a follow-up.
 func (m Model) resizeComposer() Model {
-	w := m.contentWidth() - 2 // leave room for the blue bar + its left padding
+	w := m.barWidth() - 1 // inside the accent bar: barWidth less its left padding
 	if w < 1 {
 		w = 1
 	}

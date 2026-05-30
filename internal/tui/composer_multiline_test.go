@@ -5,7 +5,22 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// The composer (blue accent bar + textarea) must never render wider than the
+// terminal — the left border renders outside lipgloss Width, so an off-by-one
+// there wraps and corrupts the footer.
+func TestComposer_FitsTerminalWidth(t *testing.T) {
+	for _, w := range []int{20, 40, 80, 100, 200} {
+		m := New(Config{URL: "http://x"})
+		m, _ = step(t, m, tea.WindowSizeMsg{Width: w, Height: 24})
+		m, _ = step(t, m, key("h"))
+		if got := lipgloss.Width(m.composerView()); got > w {
+			t.Fatalf("composer renders %d cols, exceeds terminal width %d", got, w)
+		}
+	}
+}
 
 // The composer must be a real multi-line editor: ctrl+j (and shift+enter where
 // the terminal supports it) inserts a newline, plain enter submits, and the box

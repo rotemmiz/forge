@@ -78,6 +78,10 @@ type Model struct {
 	// Composer.
 	input textinput.Model
 	model promptModel
+
+	// Command overlay.
+	modal    modalKind
+	modalSel int
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -126,8 +130,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		// ctrl+c always quits.
+		if msg.String() == "ctrl+c" {
 			if m.stream != nil {
 				m.stream.Close()
 			}
@@ -135,6 +139,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel() // cancel any in-flight health/open cmd + SDK work
 			}
 			return m, tea.Quit
+		}
+		// A modal captures navigation/selection keys.
+		if m.modal != modalNone {
+			return m.handleModalKey(msg)
+		}
+		switch msg.String() {
+		case "ctrl+p":
+			m.modal, m.modalSel = modalPalette, 0
+			return m, nil
 		case "enter":
 			return m.submit()
 		}
@@ -142,6 +155,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
+
+	case sessionOpenedMsg:
+		if msg.err != nil {
+			m.status = "create session failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		m.cfg.SessionID, m.screen, m.modal = msg.session.ID, ScreenSession, modalNone
+		return m, nil
+
+	case sessionDeletedMsg:
+		if msg.err != nil {
+			m.status = "delete failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.store.sessions = removeSession(m.store.sessions, msg.id)
+		delete(m.store.messages, msg.id)
+		if m.modalSel > 0 && m.modalSel >= m.modalCount() {
+			m.modalSel = m.modalCount() - 1
+		}
+		if m.cfg.SessionID == msg.id { // the open session was deleted
+			if ss := m.orderedSessions(); len(ss) > 0 {
+				m.cfg.SessionID = ss[0].ID
+				return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
+			}
+			m.cfg.SessionID, m.screen = "", ScreenSplash
+		}
+		return m, nil
 
 	case connectedMsg:
 		m.conn, m.status, m.attempt = Connected, "connected", 0
@@ -236,6 +277,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleModalKey routes keys while a command overlay is open.
+func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.modal, m.modalSel = modalNone, 0
+		return m, nil
+	case "up", "k", "ctrl+p":
+		if m.modalSel > 0 {
+			m.modalSel--
+		}
+		return m, nil
+	case "down", "j", "ctrl+n":
+		if m.modal == modalSessions && msg.String() == "ctrl+n" {
+			m.modal = modalNone
+			return m, newSessionCmd(m.ctx, m.client)
+		}
+		if m.modalSel < m.modalCount()-1 {
+			m.modalSel++
+		}
+		return m, nil
+	case "enter":
+		return m.modalSelect()
+	case "ctrl+d":
+		if m.modal == modalSessions {
+			if ss := m.orderedSessions(); m.modalSel < len(ss) {
+				return m, deleteSessionCmd(m.ctx, m.client, ss[m.modalSel].ID)
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
 // submit sends the composer's text: it creates a session first if none is open,
 // then prompts. Requires a resolved model.
 func (m Model) submit() (tea.Model, tea.Cmd) {
@@ -254,8 +328,11 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model)
 }
 
-// View renders the active screen.
+// View renders the active screen (or the command overlay when one is open).
 func (m Model) View() string {
+	if m.modal != modalNone {
+		return m.modalView()
+	}
 	switch m.screen {
 	case ScreenSession:
 		return m.viewSession()

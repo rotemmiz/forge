@@ -16,7 +16,7 @@ import (
 
 // ForgeClient is the Forge/opencode SDK: the generated REST client (API) plus
 // cross-cutting auth + directory-routing header injection, and a hand-written
-// SSE client (sse.go). A WebSocket-PTY client is forthcoming (plan 06).
+// SSE client (sse.go) and a hand-written WebSocket-PTY client (pty.go).
 //
 // It is wire-generic: point it at a Forge daemon or a real opencode daemon — the
 // contract is identical (plan 06 / plan 08 "opencode now, Forge-ready").

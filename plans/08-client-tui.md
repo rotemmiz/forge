@@ -382,3 +382,47 @@ Run by a developer before each daemon milestone:
 | SSE goroutine / Bubble Tea `Send` race conditions | Low | `tea.Program.Send` is documented as goroutine-safe; verify with `-race` flag in CI |
 | WS-PTY framing edge cases (control frame 0x00 prefix) | Medium | T11 is stretch; test framing unit against a known-good opencode PTY session before enabling |
 | TUI becomes a distraction from the Go daemon | Low | Strictly timeboxed; if T1–T10 are not done in 2 sprints, cut T11 and go straight to conformance |
+
+---
+
+## Build-program addendum — full-design TUI (2026-05-30, user-approved)
+
+This refines the milestone table above. The original T1–T12 describe a *minimal conformance
+probe*; the project now builds the **full design handoff** (`design/tui/`, high-fidelity) using the
+Bubble Tea architecture above as the engine. Recorded per the "update a plan only if it contradicts
+reality, and say so explicitly" rule.
+
+**Decisions locked with the user:**
+1. **Scope = the full design, phased.** Splash, rich conversation stream (user/thinking/markdown/
+   tool-rows/diff/write/bash/todos/sub-agent/summary blocks + streaming cursor), sidebar, status
+   bar, persistent tasks board, slash/@/`ctrl+x`-leader input, and the seven command modals. The
+   "Feature scope (minimal viable)" table above is the fallback floor, not the target.
+2. **Target opencode now, Forge-ready.** Develop against the **real opencode daemon** (full wire
+   surface, zero gaps) for fast UI iteration, keeping everything wire-generic so the URL flips to
+   Forge anytime. A **parallel Forge gap-closing track** wires the endpoints the design needs that
+   Forge currently 501s: `GET /provider`, `GET /agent`, `POST /permission/:id/reply` +
+   `GET /permission`, `POST /question/:id/reply` + `GET /question` (the permission/question managers
+   already exist; only the HTTP surface is missing).
+3. **Consume the generated plan-06 Go SDK.** Build the **Go SDK (plan 06) first** as the prerequisite
+   (oapi-codegen REST client + hand-written SSE/WS-PTY clients + a `createForgeClient`-style wrapper
+   doing auth + `x-opencode-directory` injection). The TUI's client layer (U2) consumes it rather
+   than hand-rolling.
+
+**Sequenced program:**
+- **Prereq — Plan 06 (Go SDK):** generated REST client + hand-written SSE consumer + WS-PTY + auth/
+  directory wrapper; smoke-tested against a running opencode daemon.
+- **Phase 0 — foundation:** `U0` scaffold (`cmd/forge-tui` + `internal/tui/`, Bubble Tea/Lipgloss,
+  flags) · `U1` theme (lift `design/tui/styles.css` `:root` tokens → Lipgloss palette + styles,
+  density variants, truecolor→256 degrade; unit-tested) · `U2` SDK client wiring + health + auth.
+- **Phase 1 — hero conversation stream:** `U3` Model/Update/View + screens + SSE goroutine →
+  msgs · `U4` `Reduce(model,event)` pure reducer (table-tested) · `U5` block renderers (all design
+  block types) · `U6` composer + submit (optimistic, auto-scroll). → a streaming coding turn renders
+  matching the design.
+- **Phase 2 — chrome + navigation:** `U7` status bar + sidebar · `U8` the seven command modals
+  (palette/model/agent/theme/session/timeline/status; needs `/provider`,`/agent`) · `U9` slash
+  autocomplete + @-mention picker + `ctrl+x` leader keys.
+- **Phase 3 — interactive + board:** `U10` permission + question overlays (reply endpoints) ·
+  `U11` tasks board dock (reads `tasks.md`/issues) · `U12` (stretch) PTY pane · `U13` conformance
+  parity: identical scenario vs opencode and Forge.
+- **Parallel — Forge gap-closing:** wire the four endpoint families above so the TUI flips from
+  opencode to Forge cleanly (each small; the engine managers already exist).

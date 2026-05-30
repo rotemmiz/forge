@@ -610,9 +610,10 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model, m.agent)
 }
 
-// View renders the active screen (or the command overlay when one is open),
-// painted on the theme's background so foreground-only renderers stay legible
-// regardless of the terminal's native background.
+// View renders the active screen (or the command overlay when one is open). The
+// default theme renders on the terminal's native background (no full-screen fill,
+// so it doesn't paint a mismatched box); an explicitly chosen light/mono theme
+// paints its background so it stays legible on any terminal.
 func (m Model) View() string {
 	var body string
 	switch {
@@ -627,10 +628,17 @@ func (m Model) View() string {
 	default:
 		body = m.viewSplash()
 	}
-	if m.width == 0 || m.height == 0 {
-		return body
+	if !m.paintsBackground() {
+		return body // default theme → terminal-native background
 	}
 	return lipgloss.NewStyle().Background(m.styles.P.Bg).Width(m.width).Height(m.height).Render(body)
+}
+
+// paintsBackground reports whether the view fills the screen with the theme's
+// background. Only a non-default (light/mono) theme does — the default renders on
+// the terminal's native background so it doesn't paint a mismatched box.
+func (m Model) paintsBackground() bool {
+	return m.width > 0 && m.height > 0 && m.themeName != theme.Palettes()[0].Name
 }
 
 // viewSplash renders the wordmark, the composer, and the connection status.

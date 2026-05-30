@@ -8,6 +8,40 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+func TestPaintsBackground_OnlyNonDefaultTheme(t *testing.T) {
+	m := New(Config{URL: "http://x"})
+	m.width, m.height = 80, 24
+	if m.paintsBackground() {
+		t.Fatal("default (forge-dark) must render on the terminal background, no gray fill")
+	}
+	m.modal, m.modalSel = modalThemes, 1 // forge-light
+	next, _ := m.modalSelect()
+	if !next.(Model).paintsBackground() {
+		t.Fatal("a non-default theme should paint its own background")
+	}
+	m0 := New(Config{URL: "http://x"}) // no window size yet
+	m0.themeName = "monochrome"
+	if m0.paintsBackground() {
+		t.Fatal("with no window size, nothing paints")
+	}
+}
+
+// Overlays must render as clean rectangles (uniform line width, no ragged edge).
+func TestAutocompleteView_UniformWidth(t *testing.T) {
+	m := New(Config{URL: "http://x"})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.commands = []slashItem{{name: "/init", desc: "guided setup", kind: slashDaemon}}
+	m.input.SetValue("/")
+	m, _ = m.refreshAutocomplete()
+	rows := strings.Split(strings.TrimRight(m.autocompleteView(), "\n"), "\n")
+	w := lipgloss.Width(rows[0])
+	for i, r := range rows {
+		if lipgloss.Width(r) != w {
+			t.Fatalf("popup line %d width %d != %d (ragged panel)", i, lipgloss.Width(r), w)
+		}
+	}
+}
+
 func TestHumanInt(t *testing.T) {
 	cases := map[int]string{0: "0", 42: "42", 999: "999", 1000: "1,000", 1234: "1,234", 1234567: "1,234,567"}
 	for in, want := range cases {

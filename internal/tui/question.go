@@ -174,9 +174,9 @@ func (m Model) questionView() string {
 		}
 		row := mark + opt.Label
 		if i == m.qSel {
-			lines = append(lines, s.Selection.Width(width-2).Render(" "+row))
+			lines = append(lines, s.Selection.Width(width-4).Render(" "+row)) // -4: fits inside Padding(1,2)
 		} else {
-			lines = append(lines, s.Base.Render("  "+row))
+			lines = append(lines, s.Base.Render(" "+row))
 		}
 	}
 	if len(info.Options) == 0 { // free-text-only question: not answerable here
@@ -198,7 +198,6 @@ func (m Model) questionView() string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(s.P.Blue).
-		Background(s.P.BgElev).
 		Padding(1, 2).
 		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))

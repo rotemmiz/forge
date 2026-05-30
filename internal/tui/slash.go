@@ -287,38 +287,63 @@ func (m Model) autocompleteView() string {
 		return ""
 	}
 	s := m.styles
-	var lines []string
 
+	// Build (name, desc) rows, then size the panel to the widest so the selection
+	// bar spans the full row consistently.
+	type acRow struct{ name, desc string }
+	var rows []acRow
 	switch m.ac.mode {
 	case acMention:
 		if len(m.ac.files) == 0 {
 			return "" // nothing matched (or still searching) — no panel
 		}
-		for i, f := range m.ac.files {
-			label := truncate(f, 52)
-			if i == m.ac.sel {
-				lines = append(lines, s.Selection.Render(" "+label))
-			} else {
-				lines = append(lines, "  "+s.Dim.Render(label))
-			}
+		for _, f := range m.ac.files {
+			rows = append(rows, acRow{name: truncate(f, 58)})
 		}
 	default: // acSlash
 		if len(m.ac.items) == 0 {
 			return ""
 		}
-		for i, it := range m.ac.items {
-			if i == m.ac.sel {
-				lines = append(lines, s.Selection.Render(" "+it.name)+"  "+s.Faint.Render(it.desc))
-			} else {
-				lines = append(lines, "  "+s.Dim.Render(it.name)+"  "+s.Faint.Render(it.desc))
+		for _, it := range m.ac.items {
+			rows = append(rows, acRow{name: it.name, desc: it.desc})
+		}
+	}
+
+	inner := 0
+	for _, r := range rows {
+		w := lipgloss.Width(r.name)
+		if r.desc != "" {
+			w += 2 + lipgloss.Width(r.desc)
+		}
+		if w > inner {
+			inner = w
+		}
+	}
+	inner++ // a leading space before each row
+	if inner > 60 {
+		inner = 60
+	}
+
+	var lines []string
+	for i, r := range rows {
+		if i == m.ac.sel { // full-width amber bar over the whole row
+			plain := r.name
+			if r.desc != "" {
+				plain += "  " + r.desc
 			}
+			lines = append(lines, s.Selection.Width(inner).Render(" "+plain))
+		} else {
+			line := " " + s.Base.Render(r.name)
+			if r.desc != "" {
+				line += "  " + s.Faint.Render(r.desc)
+			}
+			lines = append(lines, line)
 		}
 	}
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(s.P.Border).
-		Background(s.P.BgElev).
 		Padding(0, 1).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 }

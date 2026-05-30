@@ -282,20 +282,19 @@ func (m Model) modalView() string {
 	}
 	for i := start; i < end; i++ {
 		if i == m.modalSel {
-			lines = append(lines, s.Selection.Width(width-2).Render(" "+rows[i]))
+			lines = append(lines, s.Selection.Width(width-4).Render(" "+rows[i])) // -4: fits inside Padding(1,2)
 		} else {
-			lines = append(lines, s.Base.Render("  "+rows[i]))
+			lines = append(lines, s.Base.Render(" "+rows[i]))
 		}
 	}
 	if end < len(rows) {
-		lines = append(lines, s.Faint.Render("  ↓ more"))
+		lines = append(lines, s.Faint.Render(" ↓ more"))
 	}
 	lines = append(lines, "", s.Faint.Render(footer))
 
 	panel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(s.P.Border).
-		Background(s.P.BgElev).
 		Padding(1, 2).
 		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))

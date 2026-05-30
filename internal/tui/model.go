@@ -1,0 +1,119 @@
+// Package tui is the Forge terminal client: a Bubble Tea app over the
+// opencode/Forge wire protocol (via the Go SDK, plan 06). It is wire-generic —
+// point it at a Forge or a real opencode daemon. Design: design/tui/ (plan 08).
+package tui
+
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/rotemmiz/forge/internal/tui/theme"
+)
+
+// Screen is the active top-level view.
+type Screen int
+
+const (
+	// ScreenSplash is the first-run entry / connecting state.
+	ScreenSplash Screen = iota
+	// ScreenSession is the conversation stream.
+	ScreenSession
+)
+
+// ConnState is the daemon connection state.
+type ConnState int
+
+const (
+	// Connecting is the initial state before the first successful health check.
+	Connecting ConnState = iota
+	// Connected means the daemon is reachable and the event stream is live.
+	Connected
+	// Reconnecting means the stream dropped and is backing off.
+	Reconnecting
+	// ConnError is a terminal connection/auth failure.
+	ConnError
+)
+
+// Config configures a Model.
+type Config struct {
+	URL       string
+	Directory string
+	SessionID string
+	Username  string
+	Password  string
+}
+
+// Model is the Bubble Tea application state.
+type Model struct {
+	cfg    Config
+	styles theme.Styles
+
+	width  int
+	height int
+
+	screen Screen
+	conn   ConnState
+	status string // human-readable connection status
+	err    error
+}
+
+// New builds the initial Model.
+func New(cfg Config) Model {
+	return Model{
+		cfg:    cfg,
+		styles: theme.DefaultStyles(),
+		screen: ScreenSplash,
+		conn:   Connecting,
+		status: "connecting to " + cfg.URL,
+	}
+}
+
+// Init is the first command. Daemon connection + SSE land in U2.
+func (m Model) Init() tea.Cmd { return nil }
+
+// Update handles messages.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+// View renders the active screen.
+func (m Model) View() string {
+	switch m.screen {
+	case ScreenSession:
+		return m.viewSession()
+	default:
+		return m.viewSplash()
+	}
+}
+
+// viewSplash renders the wordmark + connection status, centered.
+func (m Model) viewSplash() string {
+	s := m.styles
+	wordmark := s.Base.Bold(true).Render("forge")
+	status := s.Faint.Render(m.status)
+	if m.err != nil {
+		status = lipgloss.NewStyle().Foreground(s.P.Red).Render(m.err.Error())
+	}
+	hint := s.Faint.Render("q quit")
+
+	body := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", status, "", hint)
+	if m.width == 0 || m.height == 0 {
+		return body
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+}
+
+func (m Model) viewSession() string {
+	// Filled in at U5 (the conversation stream).
+	return m.styles.Base.Render("session " + m.cfg.SessionID)
+}

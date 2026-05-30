@@ -107,9 +107,9 @@ func (m Model) permissionView() string {
 	lines = append(lines, "")
 	for i, c := range permChoices {
 		if i == m.permSel {
-			lines = append(lines, s.Selection.Width(width-2).Render(" "+c.label))
+			lines = append(lines, s.Selection.Width(width-4).Render(" "+c.label)) // -4: fits inside Padding(1,2)
 		} else {
-			lines = append(lines, s.Base.Render("  "+c.label))
+			lines = append(lines, s.Base.Render(" "+c.label))
 		}
 	}
 	hint := "a allow · s always · r reject · enter select"
@@ -121,7 +121,6 @@ func (m Model) permissionView() string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(s.P.Amber).
-		Background(s.P.BgElev).
 		Padding(1, 2).
 		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))

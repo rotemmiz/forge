@@ -73,7 +73,7 @@ func (m Model) statusBarView(width int) string {
 		return lipgloss.NewStyle().Width(width).Render(right)
 	}
 	bar := left + strings.Repeat(" ", gap) + right
-	return lipgloss.NewStyle().Background(s.P.BgElev).Width(width).Render(bar)
+	return lipgloss.NewStyle().Width(width).Render(bar) // no fill — render on the terminal background
 }
 
 // connGlyph is a colored dot for the connection state.

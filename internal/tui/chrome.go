@@ -32,9 +32,24 @@ func (m Model) modeName() string {
 	return "build"
 }
 
-// showSidebar reports whether the right sidebar fits and is enabled.
-func (m Model) showSidebar() bool {
-	return !m.sidebarHidden && m.width >= 80 && m.height >= 10
+// sidebarVisible reports whether the right sidebar is shown: only on the session
+// screen, when enabled, and when the terminal is wide/tall enough.
+func (m Model) sidebarVisible() bool {
+	return m.screen == ScreenSession && !m.sidebarHidden && m.width >= 80 && m.height >= 10
+}
+
+// leftColumnWidth is the width available to the stream + composer + status bar —
+// the full width less the sidebar when it's shown. Computed without rendering so
+// the Update path (resizeComposer) and the render path agree; a unit test pins
+// lipgloss.Width(sidebarView()) == sidebarWidth so the constant stays honest.
+func (m Model) leftColumnWidth() int {
+	if m.sidebarVisible() {
+		return m.width - sidebarWidth
+	}
+	if m.width == 0 {
+		return 0
+	}
+	return m.width
 }
 
 // statusBarView renders the full-width bottom bar: mode · model on the left,

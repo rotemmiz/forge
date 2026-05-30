@@ -18,10 +18,9 @@ func (m Model) renderSession() string {
 
 	// Optional right sidebar; the stream + composer take the remaining width.
 	sidebar := ""
-	leftW := m.width
-	if m.showSidebar() {
-		sidebar = m.sidebarView()
-		leftW = m.width - lipgloss.Width(sidebar)
+	leftW := m.leftColumnWidth()
+	if m.sidebarVisible() {
+		sidebar = m.sidebarView() // width == sidebarWidth (pinned by a test)
 	}
 	m.streamWidth = leftW // narrows the stream/composer wrap to the left column
 
@@ -108,10 +107,11 @@ func (m Model) prose(text string) string {
 	return lipgloss.NewStyle().Width(m.contentWidth()).Render(m.styles.Base.Render(text))
 }
 
-// thinking renders the design's "+ Thought" line.
+// thinking renders the design's "+ Thought" line (truncated to the column).
 func (m Model) thinking(text string) string {
-	head := lipgloss.NewStyle().Foreground(m.styles.P.Amber).Render("+ Thought ")
-	return head + m.styles.Faint.Render(firstLine(text))
+	head := "+ Thought "
+	body := truncate(firstLine(text), m.contentWidth()-lipgloss.Width(head))
+	return lipgloss.NewStyle().Foreground(m.styles.P.Amber).Render(head) + m.styles.Faint.Render(body)
 }
 
 // toolRow renders a terse tool one-liner colored by status (design tool grammar).
@@ -137,9 +137,13 @@ func (m Model) toolRow(p Part) string {
 	if detail == "" {
 		detail = st.Status
 	}
-	row := gstyle.Render(glyph) + " " + label + " " + s.Faint.Render(detail)
+	// Bound the row to the column: the prefix (glyph + tool) is short, so trim the
+	// detail to whatever space is left.
+	avail := m.contentWidth() - lipgloss.Width(glyph) - 1 - lipgloss.Width(p.Tool) - 1
+	row := gstyle.Render(glyph) + " " + label + " " + s.Faint.Render(truncate(detail, avail))
 	if st.Status == "error" && st.Error != "" {
-		row += "\n  " + lipgloss.NewStyle().Foreground(s.P.Red).Render(firstLine(st.Error))
+		errLine := truncate(firstLine(st.Error), m.contentWidth()-2)
+		row += "\n  " + lipgloss.NewStyle().Foreground(s.P.Red).Render(errLine)
 	}
 	return row
 }

@@ -41,8 +41,9 @@ func (m Model) timelineItems() []timelineItem {
 // revertedMsg is the result of a revert/unrevert.
 type revertedMsg struct{ err error }
 
-// revertCmd reverts the session to (just before) a message — opencode's
-// checkpoint mechanism; POST /session/:id/unrevert restores it.
+// revertCmd reverts the session to before the given user turn — that turn and
+// every message after it are dropped (opencode's checkpoint mechanism); it is
+// reversible via POST /session/:id/unrevert.
 func revertCmd(ctx context.Context, c *forgeclient.ForgeClient, sessionID, messageID string) tea.Cmd {
 	return func() tea.Msg {
 		err := c.PostJSON(ctx, "/session/"+sessionID+"/revert", map[string]string{"messageID": messageID}, nil)

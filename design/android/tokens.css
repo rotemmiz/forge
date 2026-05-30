@@ -1,0 +1,73 @@
+/* ============================================================
+   FORGE ANDROID — design tokens
+   Charcoal palette carried from the Forge TUI, mapped onto
+   Material 3 color roles. Dark is primary; light vars included
+   for the full prototype's theme toggle (directions show dark).
+   ============================================================ */
+
+:root {
+  /* ---- raw Forge charcoal palette (from the TUI styles.css) ---- */
+  --forge-bg:        #15171a;
+  --forge-panel:     #1c1f23;
+  --forge-elev:      #20242a;
+  --forge-sel:       #262b31;
+  --forge-border:    #2c3137;
+  --forge-hairline:  #23272c;
+
+  --forge-fg:        #d6dade;
+  --forge-dim:       #8b929a;
+  --forge-faint:     #585f67;
+  --forge-ghost:     #3a4047;
+
+  --blue:    #6fa8dc;
+  --green:   #8cc265;
+  --red:     #e0606e;
+  --amber:   #d99a4e;
+  --purple:  #b08cd4;
+  --cyan:    #5fb3c4;
+  --yellow:  #d6c370;
+
+  /* diff tints */
+  --diff-add:  rgba(140,194,101,0.13);
+  --diff-del:  rgba(224,96,110,0.13);
+  --diff-add-hl: rgba(140,194,101,0.28);
+  --diff-del-hl: rgba(224,96,110,0.30);
+  --hunk-bg:   rgba(176,140,212,0.10);
+
+  /* ---- Material 3 dark color roles (aliased onto Forge palette) ---- */
+  --surface:                  var(--forge-bg);     /* page background */
+  --surface-container-lowest: #101316;
+  --surface-container-low:    #181b1f;
+  --surface-container:        var(--forge-panel);  /* cards, composer */
+  --surface-container-high:   var(--forge-elev);   /* sheets, menus */
+  --surface-container-highest:#262b31;             /* hover / drag */
+  --outline:                  #3a4047;
+  --outline-variant:          var(--forge-border);
+  --hairline:                 var(--forge-hairline);
+
+  --on-surface:               var(--forge-fg);
+  --on-surface-variant:       var(--forge-dim);
+  --on-surface-faint:         var(--forge-faint);
+  --on-surface-ghost:         var(--forge-ghost);
+
+  --primary:                  var(--blue);
+  --on-primary:               #0a1722;
+  --primary-container:        #243648;
+  --secondary:                var(--amber);   /* selection / active */
+  --on-secondary:             #1a1207;
+  --secondary-container:      rgba(217,154,78,0.16);
+  --tertiary:                 var(--green);
+  --error:                    var(--red);
+
+  /* type */
+  --sans: "Roboto", system-ui, -apple-system, sans-serif;
+  --mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* M3 corner shapes — Forge character: tighter than stock M3 */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-full: 999px;
+}

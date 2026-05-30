@@ -13,6 +13,7 @@
 - [01 — Daemon core](01-daemon-core.md): transport, auth, instance routing
 - [06 — SDK generation](06-sdk-generation.md): Go SDK generated from the OpenAPI spec
 - [12 — Compatibility](12-test-compatibility.md): conformance harness
+- [Design reference](../design/tui/): Claude design handoff — tokens, screens, components (high-fidelity; `design/tui/README.md`)
 
 ---
 

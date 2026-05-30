@@ -12,6 +12,7 @@
 - [06 — SDK generation](06-sdk-generation.md): Kotlin SDK generated from the OpenAPI spec
 - [12 — Compatibility](12-test-compatibility.md): conformance harness, cross-daemon validation
 - [13 — Remote ops](13-remote-ops.md): push notification infrastructure, remote hardening
+- [Design reference](../design/android/): Claude design handoff — "Terminal-Material" direction, tokens, screens (`design/android/README.md`)
 
 ---
 

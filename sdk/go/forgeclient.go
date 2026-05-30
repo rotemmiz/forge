@@ -172,6 +172,25 @@ func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) 
 	return nil
 }
 
+// Delete performs an authed DELETE on a path. Non-2xx is an error.
+func (c *ForgeClient) Delete(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("DELETE %s: status %d", path, resp.StatusCode)
+	}
+	return nil
+}
+
 // BaseURL returns the daemon base URL.
 func (c *ForgeClient) BaseURL() string { return c.baseURL }
 

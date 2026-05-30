@@ -336,3 +336,20 @@ are the `[ ]` notes above (deferred edges) + the deferred live PTY WS conformanc
       live path is reachable over HTTP, not just via the engine API.
 - [ ] DESIGN CONFIRM: M6 task/websearch/skill take injected collaborators with stub defaults;
       doom-loop scope counts tool calls (not arbitrary parts); websearch is flag-gated only.
+
+## Post-M9 follow-ups (a/b/c) — merged 2026-05-30
+
+- [x] (a) HTTP prompt endpoints wired to the engine (PR #6): POST /session/:id/message (sync→{info,parts}),
+      prompt_async (204), GET /message, POST /abort; 404 on unknown session, 409 on busy.
+      httptest end-to-end through middleware→handler→engine→DB. (automated)
+- [x] (b) M10 compaction (PR #7): overflow→summary(summary:true)→session.compacted→resume; prune
+      protects recent turns. Unit (selectTail, prune) + E2E. (automated)
+- [x] (c) Anthropic provider (PR #8): hand-rolled /v1/messages client, content_block SSE→llm.Event,
+      thinking-signature passthrough; provider factory routes anthropic-native vs openai-compatible
+      (Bedrock/Vertex excluded). httptest event-sequence + request-render tests. (automated)
+- [ ] LIVE PROOF over HTTP (needs your free-tier key + a running daemon): start `./bin/forged --port 4096`,
+      then with the provider env set (FORGE_PROVIDER_BASE_URL / FORGE_PROVIDER_API_KEY), create a session
+      and `curl -XPOST localhost:4096/session/$ID/message?directory=$PWD -d '{"model":{"providerID":"openai-compatible","modelID":"<model>"},"parts":[{"type":"text","text":"ping"}]}'`.
+      (The engine-level TestLive already proves the model wire; this proves the HTTP surface.)
+- [ ] DESIGN CONFIRM: HTTP default permission policy is allow-all until plan-04 config/agent rules;
+      the prompt loop runs on context.WithoutCancel(request) so a disconnect doesn't abort (only /abort does).

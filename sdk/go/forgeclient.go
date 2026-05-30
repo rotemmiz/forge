@@ -128,6 +128,7 @@ func (c *ForgeClient) GetJSON(ctx context.Context, path string, dst any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
 		return fmt.Errorf("GET %s: status %d", path, resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
@@ -158,6 +159,7 @@ func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive reuse
 		return fmt.Errorf("POST %s: status %d", path, resp.StatusCode)
 	}
 	if dst == nil || resp.StatusCode == http.StatusNoContent {

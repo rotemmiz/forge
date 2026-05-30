@@ -102,11 +102,30 @@ func (s store) Reduce(ev forgeclient.SSEEvent) store {
 				}
 			}
 		}
+	case "message.removed":
+		var p struct {
+			SessionID string `json:"sessionID"`
+			MessageID string `json:"messageID"`
+		}
+		if decode(ev.Properties, &p) {
+			s.messages[p.SessionID] = removeByID(s.messages[p.SessionID], p.MessageID, func(m Message) string { return m.ID })
+			delete(s.parts, p.MessageID)
+		}
+	case "message.part.removed":
+		var p struct {
+			MessageID string `json:"messageID"`
+			PartID    string `json:"partID"`
+		}
+		if decode(ev.Properties, &p) {
+			s.parts[p.MessageID] = removeByID(s.parts[p.MessageID], p.PartID, func(pt Part) string { return pt.ID })
+		}
 	}
 	return s
 }
 
-// upsertByID inserts or replaces v in a slice kept sorted by its id key.
+// upsertByID inserts or replaces v in a slice kept sorted by its id key. The
+// store keeps slices sorted ASCENDING by id (chronological); callers that want
+// "newest" read the last element (or the API response slice).
 func upsertByID[T any](items []T, v T, id func(T) string) []T {
 	key := id(v)
 	i := sort.Search(len(items), func(i int) bool { return id(items[i]) >= key })
@@ -122,6 +141,16 @@ func upsertByID[T any](items []T, v T, id func(T) string) []T {
 
 func upsertSession(items []Session, v Session) []Session {
 	return upsertByID(items, v, func(s Session) string { return s.ID })
+}
+
+// removeByID drops the first element whose id matches key, preserving order.
+func removeByID[T any](items []T, key string, id func(T) string) []T {
+	for i := range items {
+		if id(items[i]) == key {
+			return append(items[:i], items[i+1:]...)
+		}
+	}
+	return items
 }
 
 func removeSession(items []Session, id string) []Session {

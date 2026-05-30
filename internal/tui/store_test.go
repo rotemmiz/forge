@@ -64,3 +64,21 @@ func TestReduce_IgnoresMalformedAndUnknown(t *testing.T) {
 		t.Fatalf("malformed/unknown events should be no-ops")
 	}
 }
+
+func TestReduce_RemovalEvents(t *testing.T) {
+	s := newStore()
+	s = s.Reduce(ev("message.updated", map[string]any{"info": map[string]any{"id": "msg_1", "sessionID": "ses_1", "role": "assistant"}}))
+	s = s.Reduce(ev("message.part.updated", map[string]any{"part": map[string]any{"id": "prt_1", "messageID": "msg_1", "type": "text", "text": "x"}}))
+	s = s.Reduce(ev("message.part.updated", map[string]any{"part": map[string]any{"id": "prt_2", "messageID": "msg_1", "type": "text", "text": "y"}}))
+
+	// remove one part
+	s = s.Reduce(ev("message.part.removed", map[string]any{"messageID": "msg_1", "partID": "prt_1"}))
+	if len(s.parts["msg_1"]) != 1 || s.parts["msg_1"][0].ID != "prt_2" {
+		t.Fatalf("part not removed: %+v", s.parts["msg_1"])
+	}
+	// remove the message (drops it + its parts)
+	s = s.Reduce(ev("message.removed", map[string]any{"sessionID": "ses_1", "messageID": "msg_1"}))
+	if len(s.messages["ses_1"]) != 0 || len(s.parts["msg_1"]) != 0 {
+		t.Fatalf("message not removed: msgs=%+v parts=%+v", s.messages["ses_1"], s.parts["msg_1"])
+	}
+}

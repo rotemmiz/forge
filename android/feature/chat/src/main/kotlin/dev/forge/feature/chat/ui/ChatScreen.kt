@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +31,7 @@ import dev.forge.feature.chat.ChatViewModel
 fun ChatScreen(
     sessionId: String,
     onNavigateBack: () -> Unit,
+    onOpenTerminal: (directory: String) -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -54,8 +56,21 @@ fun ChatScreen(
     val pendingPermission = uiState.pendingPermissions.firstOrNull()
     val pendingQuestion = uiState.pendingQuestions.firstOrNull()
 
+    val sessionDirectory = uiState.session?.directory
+
     Scaffold(
         containerColor = Surface,
+        floatingActionButton = {
+            if (sessionDirectory != null) {
+                FloatingActionButton(
+                    onClick = { onOpenTerminal(sessionDirectory) },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Icon(Icons.Default.Terminal, contentDescription = "Open Terminal")
+                }
+            }
+        },
         topBar = {
             Column {
                 TopAppBar(

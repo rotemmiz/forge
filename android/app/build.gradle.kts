@@ -41,6 +41,7 @@ dependencies {
     implementation(project(":feature:sessions"))
     implementation(project(":feature:chat"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:terminal"))
 
     implementation(libs.android.core.ktx)
     implementation(libs.android.lifecycle.runtime.ktx)

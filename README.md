@@ -2,11 +2,7 @@
 
 A ground-up, interop-first alternative to opencode: a Go daemon that is wire-compatible with opencode's HTTP+SSE+WebSocket API.
 
-## Why Forge
-
-1. **Mobile + remote-first.** The missing opencode client is mobile. Forge is built so the Android client ships against the real opencode daemon from day one; later the Go daemon becomes the target.
-2. **Ownership and control.** Full control over the license, data model, and release cadence.
-3. **Go runtime, single binary.** No Node.js subprocess, no install friction — one static binary, cold-start in milliseconds.
+opencode is amazing. This is a personal exercise in reimplementing it from scratch in Go — to see how far the rewrite gets, and as a bonus ship the mobile client that opencode is missing.
 
 Wire compatibility is kept deliberately until interop becomes a wall worth breaking.
 

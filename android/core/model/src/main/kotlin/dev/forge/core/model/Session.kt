@@ -18,7 +18,7 @@ data class Session(
     val summary: SessionSummary? = null,
     val share: SessionShare? = null,
     val time: SessionTime? = null,
-    val version: Int? = null,
+    val version: String? = null,
 )
 
 @Serializable

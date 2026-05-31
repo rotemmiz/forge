@@ -42,20 +42,60 @@ class ForgeClient @Inject constructor(
     suspend fun getMessages(sessionId: String, directory: String? = null): List<Message> =
         get("/session/$sessionId/message", directory = directory) { json ->
             val arr = json as? JsonArray ?: return@get emptyList()
-            arr.map { elem ->
-                val obj = elem.jsonObject
-                val role = obj["role"]?.jsonPrimitive?.content ?: "assistant"
-                when (role) {
-                    "user" -> ForgeJson.decodeFromJsonElement(UserMessage.serializer(), obj).toMessage()
-                    else -> ForgeJson.decodeFromJsonElement(AssistantMessage.serializer(), obj).toMessage()
-                }
+            arr.mapNotNull { elem ->
+                try {
+                    val obj = elem.jsonObject
+                    // opencode wraps messages as { info: {...}, parts: [...] }
+                    val info = obj["info"]?.jsonObject ?: obj   // fall back to flat if unwrapped
+                    val partsArr = obj["parts"]?.jsonArray ?: JsonArray(emptyList())
+                    val role = info["role"]?.jsonPrimitive?.content ?: "assistant"
+                    val id = info["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val sessionID = info["sessionID"]?.jsonPrimitive?.content ?: sessionId
+                    val timeObj = info["time"]?.jsonObject
+                    val time = MessageTime(
+                        created = timeObj?.get("created")?.jsonPrimitive?.long ?: 0L,
+                        completed = timeObj?.get("completed")?.jsonPrimitive?.longOrNull,
+                    )
+                    val parts = partsArr.mapNotNull { p ->
+                        try { parsePart(p.jsonObject) } catch (_: Exception) { null }
+                    }
+                    val model = info["model"]?.let { ForgeJson.decodeFromJsonElement(MessageModel.serializer(), it) }
+                    val agent = info["agent"]?.jsonPrimitive?.content
+                    val error = if (role == "assistant") {
+                        info["error"]?.let { ForgeJson.decodeFromJsonElement(AssistantError.serializer(), it) }
+                    } else null
+                    Message(id = id, sessionID = sessionID, role = role, time = time,
+                        parts = parts, error = error, model = model, agent = agent)
+                } catch (_: Exception) { null }
             }
         }
+
+    private fun parsePart(obj: JsonObject): Part {
+        val type = obj["type"]?.jsonPrimitive?.content ?: "unknown"
+        val id = obj["id"]?.jsonPrimitive?.content ?: ""
+        val sessionID = obj["sessionID"]?.jsonPrimitive?.content ?: ""
+        val messageID = obj["messageID"]?.jsonPrimitive?.content ?: ""
+        return when (type) {
+            "text" -> ForgeJson.decodeFromJsonElement(TextPart.serializer(), obj)
+            "reasoning" -> ForgeJson.decodeFromJsonElement(ReasoningPart.serializer(), obj)
+            "file" -> ForgeJson.decodeFromJsonElement(FilePart.serializer(), obj)
+            "step-start" -> StepStartPart(id, sessionID, messageID)
+            "step-finish" -> StepFinishPart(id, sessionID, messageID)
+            else -> UnknownPart(id, sessionID, messageID, type)
+        }
+    }
 
     suspend fun sendPrompt(sessionId: String, text: String, directory: String? = null) =
         post(
             path = "/session/$sessionId/message",
-            body = buildJsonObject { put("text", text) },
+            body = buildJsonObject {
+                put("parts", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", text)
+                    })
+                })
+            },
             directory = directory,
         ) { _ -> Unit }
 

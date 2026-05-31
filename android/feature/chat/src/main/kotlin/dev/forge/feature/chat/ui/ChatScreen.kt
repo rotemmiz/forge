@@ -109,9 +109,11 @@ fun ChatScreen(
                 .padding(bottom = 8.dp),
         ) {
             items(uiState.messages, key = { it.id }) { message ->
+                // SSE live parts supersede REST-loaded parts when present
+                val liveParts = uiState.parts[message.id]
                 MessageBlock(
                     message = message,
-                    parts = uiState.parts[message.id] ?: emptyList(),
+                    parts = if (liveParts != null) liveParts else message.parts,
                 )
             }
             items(uiState.optimisticMessages, key = { "opt:${it.id}" }) { opt ->

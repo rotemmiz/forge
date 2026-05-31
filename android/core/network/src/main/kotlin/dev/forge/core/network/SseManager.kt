@@ -65,9 +65,12 @@ class SseManager @Inject constructor(
         })
     }
 
+    private var directoryJob: Job? = null
+    private var subscribedDirectory: String? = null
+
     fun start() {
         if (running.compareAndSet(false, true)) {
-            connectionJob = scope.launch { connectionLoop() }
+            connectionJob = scope.launch { connectionLoop("/global/event") }
             scope.launch { flushLoop() }
         }
     }
@@ -75,20 +78,42 @@ class SseManager @Inject constructor(
     fun stop() {
         if (running.compareAndSet(true, false)) {
             connectionJob?.cancel()
+            directoryJob?.cancel()
             connectionJob = null
-            scope.launch { store.dispatch(AppEvent.ServerConnected.let { AppEvent.Unknown(SseEvent(type = "stop")) }) }
+            directoryJob = null
         }
     }
 
     fun reconnect() {
         connectionJob?.cancel()
         running.set(true)
-        connectionJob = scope.launch { connectionLoop() }
+        connectionJob = scope.launch { connectionLoop("/global/event") }
+        subscribedDirectory?.let { subscribeDirectory(it) }
+    }
+
+    /** Subscribe to per-directory SSE stream for streaming message parts (A6). */
+    fun subscribeDirectory(directory: String) {
+        if (subscribedDirectory == directory && directoryJob?.isActive == true) return
+        subscribedDirectory = directory
+        directoryJob?.cancel()
+        val encoded = java.net.URLEncoder.encode(directory, "UTF-8")
+        directoryJob = scope.launch {
+            var attempt = 0
+            while (running.get()) {
+                val baseUrl = connectionProvider.active?.url
+                if (baseUrl == null) { delay(2_000); continue }
+                connectOnce(baseUrl, "/event?directory=$encoded")
+                if (!running.get()) break
+                val backoff = min(RECONNECT_DELAY_BASE_MS * (1L shl attempt), RECONNECT_DELAY_MAX_MS)
+                attempt = (attempt + 1).coerceAtMost(5)
+                delay(backoff)
+            }
+        }
     }
 
     // ─── Connection loop ───────────────────────────────────────────────────────
 
-    private suspend fun connectionLoop() {
+    private suspend fun connectionLoop(path: String) {
         var attempt = 0
         while (running.get()) {
             val baseUrl = connectionProvider.active?.url
@@ -97,7 +122,7 @@ class SseManager @Inject constructor(
                 continue
             }
             store.dispatch(AppEvent.Unknown(SseEvent(type = "connecting")))
-            val connected = connectOnce(baseUrl)
+            val connected = connectOnce(baseUrl, path)
             if (!running.get()) break
             val backoff = min(RECONNECT_DELAY_BASE_MS * (1L shl attempt), RECONNECT_DELAY_MAX_MS)
             Log.d(TAG, "SSE disconnected, retry in ${backoff}ms (attempt $attempt)")
@@ -106,8 +131,8 @@ class SseManager @Inject constructor(
         }
     }
 
-    private suspend fun connectOnce(baseUrl: String): Boolean {
-        val url = "$baseUrl/global/event"
+    private suspend fun connectOnce(baseUrl: String, path: String): Boolean {
+        val url = "$baseUrl$path"
         val request = Request.Builder().url(url).build()
 
         return suspendCancellableCoroutine { cont ->

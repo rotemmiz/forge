@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.forge.core.model.*
+import dev.forge.core.network.SseManager
 import dev.forge.core.sdk.ForgeClient
 import dev.forge.core.store.AppStore
 import dev.forge.core.store.OptimisticMessage
@@ -28,6 +29,7 @@ class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val client: ForgeClient,
     private val store: AppStore,
+    private val sseManager: SseManager,
 ) : ViewModel() {
 
     private val sessionId: String = checkNotNull(savedStateHandle["sessionId"])
@@ -50,16 +52,30 @@ class ChatViewModel @Inject constructor(
 
     init {
         loadMessages()
+        // Subscribe to per-directory SSE once the session's directory is resolved
+        viewModelScope.launch {
+            uiState.collect { state ->
+                val dir = state.session?.directory
+                if (dir != null) {
+                    sseManager.subscribeDirectory(dir)
+                    return@collect  // only need to do this once
+                }
+            }
+        }
     }
 
     private fun loadMessages() {
         viewModelScope.launch {
             try {
                 val messages = client.getMessages(sessionId, directory)
+                android.util.Log.d("ChatVM", "loadMessages: got ${messages.size} messages for $sessionId")
                 messages.forEach { msg ->
+                    android.util.Log.d("ChatVM", "  dispatch msg ${msg.id} role=${msg.role} parts=${msg.parts.size}")
                     store.dispatch(AppEvent.MessageUpdated(msg))
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                android.util.Log.e("ChatVM", "loadMessages failed", e)
+            }
         }
     }
 

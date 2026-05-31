@@ -126,7 +126,8 @@ func (e *Engine) newAssistant(sessionID string, user *message.UserMessage) *mess
 
 func (e *Engine) buildSystem(modelID, override string) []string {
 	env := registry.EnvInfo{ModelID: modelID, WorkingDir: e.cfg.Directory}
-	return registry.BuildSystem(modelID, env, override)
+	instructions := append([]string{override}, e.cfg.SystemInstructions...)
+	return registry.BuildSystem(modelID, env, instructions...)
 }
 
 func (e *Engine) emitAssistant(a *message.AssistantMessage) {

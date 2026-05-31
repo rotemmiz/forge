@@ -17,11 +17,10 @@ import (
 	"github.com/rotemmiz/forge/internal/session"
 )
 
-// allowAllRulesets is the Phase-B default permission policy for the HTTP prompt
-// path: allow every tool. Config/agent-driven permission rules (which would let
-// tools default to "ask" and block on a permission.asked SSE) arrive with the
-// resource loaders in plan 04. Until a client can answer permission prompts,
-// allow-all keeps the local single-user daemon usable end-to-end.
+// allowAllRulesets is the fallback permission policy when no agent resolves
+// (defensive): allow every tool so the daemon stays usable. The normal path uses
+// the resolved agent's ruleset (agentRulesets); the build agent is allow-all, so
+// a build prompt behaves identically.
 var allowAllRulesets = []permission.Ruleset{{{Permission: "*", Pattern: "*", Action: permission.ActionAllow}}}
 
 // registerPromptRoutes wires the prompt/message endpoints onto the agent engine.
@@ -72,17 +71,18 @@ func (b promptBody) toInput(sessionID string) engine.PromptInput {
 // permission.asked event).
 func buildEngine(opts Options, inst *instance.Context, directory string, rulesets []permission.Ruleset, subagent tool.SubagentRunner) *engine.Engine {
 	return engine.New(engine.Config{
-		Store:       opts.Messages,
-		Catalog:     opts.Catalog,
-		Registry:    opts.Registry,
-		Providers:   opts.Providers,
-		Permissions: inst.Permissions,
-		Questions:   inst.Questions,
-		Subagent:    subagent,
-		Bus:         inst.Bus,
-		RunState:    inst.RunState,
-		Directory:   directory,
-		Rulesets:    rulesets,
+		Store:              opts.Messages,
+		Catalog:            opts.Catalog,
+		Registry:           opts.Registry,
+		Providers:          opts.Providers,
+		Permissions:        inst.Permissions,
+		Questions:          inst.Questions,
+		Subagent:           subagent,
+		Bus:                inst.Bus,
+		RunState:           inst.RunState,
+		Directory:          directory,
+		Rulesets:           rulesets,
+		SystemInstructions: resource.SystemInstructions(directory, loadConfig(directory)),
 	})
 }
 

@@ -56,5 +56,11 @@
     "phase": "C",
     "reason": "GET /skill loads {skill,skills}/**/SKILL.md from the .opencode config dirs (project + ~/.config/opencode), name from frontmatter (no-name skipped), content = body, dedup by name. Two gaps vs opencode: (1) Forge ships no built-in skills (opencode bundles e.g. customize-opencode, location '<built-in>'); (2) Forge does not scan the .claude/.agents external `skills/**/SKILL.md` dirs. So /skill is a subset of opencode's; not gated by a parity scenario.",
     "track": "TODO: embed built-in skills + scan .claude/.agents skill dirs (plan 04 M6)"
+  },
+  {
+    "scenario": "provider-auth",
+    "phase": "C",
+    "reason": "Credential CRUD is implemented: PUT/DELETE /auth/{providerID} read+write opencode's shared ~/.local/share/opencode/auth.json (api/oauth/wellknown records), so a key added in Forge flips /provider.connected and is shared with opencode. Deferred: GET /provider/auth (the per-provider auth-method listing) and the OAuth flow (POST /provider/:id/oauth/authorize + /callback) remain 501 — OAuth is provider-specific and intricate.",
+    "track": "TODO: GET /provider/auth method listing + OAuth authorize/callback (plan 04 M7/M8)"
   }
 ]

@@ -1,11 +1,10 @@
 package resource
 
 import (
-	"encoding/json"
 	"os"
-	"path/filepath"
 	"sort"
 
+	"github.com/rotemmiz/forge/internal/credstore"
 	"github.com/rotemmiz/forge/internal/engine/catalog"
 )
 
@@ -38,7 +37,7 @@ func BuildProviderList(cat catalog.Catalog, cfg map[string]any) ProviderList {
 	enabled := stringSet(cfg["enabled_providers"])
 	hasEnabled := enabled != nil
 
-	auth := loadAuthStore()
+	auth := credstore.Load()
 	configProviders := configProviderKeys(cfg)
 
 	result := ProviderList{All: []Provider{}, Default: map[string]string{}, Connected: []string{}}
@@ -80,38 +79,9 @@ func BuildProviderList(cat catalog.Catalog, cfg map[string]any) ProviderList {
 	return result
 }
 
-// authRecord mirrors an entry in opencode's auth.json (auth/index.ts:13-34).
-type authRecord struct {
-	Type string `json:"type"` // "api" | "oauth" | "wellknown"
-}
-
-// loadAuthStore reads ~/.local/share/opencode/auth.json (or OPENCODE_AUTH_CONTENT)
-// — the credential store Forge shares with opencode. A missing/unreadable store
-// yields an empty map (no connected providers from auth).
-func loadAuthStore() map[string]authRecord {
-	var data []byte
-	if content := os.Getenv("OPENCODE_AUTH_CONTENT"); content != "" {
-		data = []byte(content)
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil
-		}
-		b, err := os.ReadFile(filepath.Join(home, ".local", "share", "opencode", "auth.json"))
-		if err != nil {
-			return nil
-		}
-		data = b
-	}
-	var store map[string]authRecord
-	if err := json.Unmarshal(data, &store); err != nil {
-		return nil
-	}
-	return store
-}
-
-func authSource(r authRecord) string {
-	if r.Type == "api" {
+// authSource maps a stored credential's type to the provider's source label.
+func authSource(r credstore.Record) string {
+	if credstore.TypeOf(r) == "api" {
 		return "api"
 	}
 	return "env"

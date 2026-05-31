@@ -21,11 +21,14 @@ func writeFile(t *testing.T, root, rel, content string) {
 	}
 }
 
-// project sets up a temp dir with an isolated config home (so the global layer
-// doesn't leak the test machine's ~/.config/opencode) and returns the dir.
+// project sets up a temp dir with an isolated config home and HOME (so the
+// global layers — ~/.config/opencode, ~/.claude, ~/.agents — don't leak the
+// test machine's real dirs) and returns the dir.
 func project(t *testing.T) string {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "cfg"))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("OPENCODE_AUTH_CONTENT", "")
 	return t.TempDir()
 }

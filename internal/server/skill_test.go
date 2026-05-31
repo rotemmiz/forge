@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/rotemmiz/forge/internal/engine/tool"
@@ -46,6 +47,9 @@ func TestSkillEndpoint_EmptyIsArray(t *testing.T) {
 }
 
 func TestSkillResolverLoadsByName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // sandbox external ~/.claude, ~/.agents skill dirs
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	dir := t.TempDir()
 	writeMD(t, dir, ".opencode/skills/foo/SKILL.md", "---\nname: foo\n---\nfoo body")
 	r := skillResolver{directory: dir}

@@ -54,8 +54,8 @@
   {
     "scenario": "skill-list",
     "phase": "C",
-    "reason": "GET /skill loads {skill,skills}/**/SKILL.md from the .opencode config dirs (project + ~/.config/opencode), name from frontmatter (no-name skipped), content = body, dedup by name. Two gaps vs opencode: (1) Forge ships no built-in skills (opencode bundles e.g. customize-opencode, location '<built-in>'); (2) Forge does not scan the .claude/.agents external `skills/**/SKILL.md` dirs. So /skill is a subset of opencode's; not gated by a parity scenario.",
-    "track": "TODO: embed built-in skills + scan .claude/.agents skill dirs (plan 04 M6)"
+    "reason": "GET /skill loads skills from: .opencode {skill,skills}/**/SKILL.md (project + ~/.config/opencode), the external ~/.claude and ~/.agents skills/**/SKILL.md dirs (global + project found-up), and config skills.paths[] (**/SKILL.md). Name from frontmatter (no-name skipped), content = body, last-wins dedup. Remaining gaps vs opencode: (1) no built-in/embedded skills (opencode bundles e.g. customize-opencode, location '<built-in>'); (2) no remote skills.urls[] discovery/pull + cache; (3) the disableExternalSkills/disableClaudeCodeSkills flags aren't honored. Not gated by a parity scenario.",
+    "track": "TODO: embed built-in skills + remote skills.urls[] pull (plan 04 M6)"
   },
   {
     "scenario": "provider-auth",

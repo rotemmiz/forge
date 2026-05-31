@@ -18,7 +18,9 @@ import (
 // resourceServer builds a server with a catalog so /provider has data.
 func resourceServer(t *testing.T, cat catalog.Catalog) http.Handler {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), ".config"))
+	home := t.TempDir()
+	t.Setenv("HOME", home) // sandbox ~/.claude, ~/.agents skill dirs
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("OPENCODE_AUTH_CONTENT", "")
 	db, err := storage.Open(filepath.Join(t.TempDir(), "forge.db"))
 	if err != nil {

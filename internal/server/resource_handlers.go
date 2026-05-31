@@ -22,7 +22,7 @@ func registerResourceRoutes(reg func(method, path string, h http.HandlerFunc), c
 func skillListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dir := DirectoryFromContext(r.Context())
-		skills := resource.LoadSkills(dir)
+		skills := resource.LoadSkills(dir, loadConfig(dir))
 		if skills == nil {
 			skills = []resource.Skill{}
 		}

@@ -21,6 +21,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.forge.core.model.Message
 import dev.forge.core.model.Part
+import dev.forge.core.model.SnapshotFileDiff
 import dev.forge.core.store.OptimisticMessage
 import dev.forge.feature.chat.ChatViewModel
 
@@ -131,6 +132,7 @@ fun ChatScreen(
                 MessageBlock(
                     message = message,
                     parts = if (liveParts != null) liveParts else message.parts,
+                    diffs = uiState.diffs,
                 )
             }
             items(uiState.optimisticMessages, key = { "opt:${it.id}" }) { opt ->
@@ -159,31 +161,43 @@ fun ChatScreen(
 }
 
 @Composable
-private fun MessageBlock(message: Message, parts: List<Part>) {
+private fun MessageBlock(
+    message: Message,
+    parts: List<Part>,
+    diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
+) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         if (message.role == "user") {
-            UserMessageBlock(message, parts)
+            UserMessageBlock(message, parts, diffs)
         } else {
-            AssistantMessageBlock(message, parts)
+            AssistantMessageBlock(message, parts, diffs)
         }
     }
 }
 
 @Composable
-private fun UserMessageBlock(message: Message, parts: List<Part>) {
+private fun UserMessageBlock(
+    message: Message,
+    parts: List<Part>,
+    diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
+) {
     Row(modifier = Modifier.fillMaxWidth()) {
         // 2dp primary blue left accent bar
         Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(Primary))
         Column(modifier = Modifier.padding(start = 13.dp, end = 14.dp)) {
-            parts.forEach { part -> PartRenderer(part) }
+            parts.forEach { part -> PartRenderer(part, diffs = diffs) }
         }
     }
 }
 
 @Composable
-private fun AssistantMessageBlock(message: Message, parts: List<Part>) {
+private fun AssistantMessageBlock(
+    message: Message,
+    parts: List<Part>,
+    diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
+) {
     Column(modifier = Modifier.padding(horizontal = 0.dp)) {
-        parts.forEach { part -> PartRenderer(part) }
+        parts.forEach { part -> PartRenderer(part, diffs = diffs) }
     }
 }
 

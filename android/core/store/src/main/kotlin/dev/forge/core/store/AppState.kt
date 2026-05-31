@@ -5,6 +5,7 @@ import dev.forge.core.model.Part
 import dev.forge.core.model.PermissionRequest
 import dev.forge.core.model.QuestionRequest
 import dev.forge.core.model.Session
+import dev.forge.core.model.SnapshotFileDiff
 
 /** Top-level immutable application state — mirrors GlobalStore + TUI sync store. */
 data class AppState(
@@ -30,6 +31,9 @@ data class AppState(
     val optimisticMessages: Map<String, List<OptimisticMessage>> = emptyMap(),
 
     val connectionState: ConnectionState = ConnectionState.Disconnected,
+
+    /** messageID → diff file list loaded from /session/{id}/diff */
+    val diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
 )
 
 data class OptimisticMessage(

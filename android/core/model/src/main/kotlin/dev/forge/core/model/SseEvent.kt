@@ -40,6 +40,9 @@ sealed class AppEvent {
     data class QuestionReplied(val requestId: String) : AppEvent()
     data class QuestionRejected(val requestId: String) : AppEvent()
 
+    /** Diff data loaded from /session/{id}/diff */
+    data class SessionDiffLoaded(val messageId: String, val diffs: List<SnapshotFileDiff>) : AppEvent()
+
     /** Unrecognized event — stored for debug */
     data class Unknown(val raw: SseEvent) : AppEvent()
 }

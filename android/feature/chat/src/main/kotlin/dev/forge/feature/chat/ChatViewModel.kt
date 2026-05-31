@@ -18,6 +18,7 @@ data class ChatUiState(
     val session: Session? = null,
     val messages: List<Message> = emptyList(),
     val parts: Map<String, List<Part>> = emptyMap(),
+    val diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
     val optimisticMessages: List<OptimisticMessage> = emptyList(),
     val pendingPermissions: List<PermissionRequest> = emptyList(),
     val pendingQuestions: List<QuestionRequest> = emptyList(),
@@ -43,6 +44,7 @@ class ChatViewModel @Inject constructor(
                 session = session,
                 messages = appState.messages[sessionId] ?: emptyList(),
                 parts = appState.parts,
+                diffs = appState.diffs,
                 optimisticMessages = appState.optimisticMessages[sessionId] ?: emptyList(),
                 pendingPermissions = appState.permissions[sessionId] ?: emptyList(),
                 pendingQuestions = appState.questions[sessionId] ?: emptyList(),
@@ -69,6 +71,16 @@ class ChatViewModel @Inject constructor(
                 .filter { it is ConnectionState.Connected }
                 .collect { loadMessages() }
         }
+        // C4 — Watch for new PatchParts and load diff content for each one not yet fetched
+        viewModelScope.launch {
+            store.state.collect { appState ->
+                val dir = appState.sessions.firstOrNull { it.id == sessionId }?.directory ?: return@collect
+                val allParts = appState.parts.values.flatten()
+                allParts.filterIsInstance<PatchPart>()
+                    .filter { it.sessionID == sessionId && it.messageID !in appState.diffs }
+                    .forEach { patch -> loadDiff(patch.messageID, dir) }
+            }
+        }
     }
 
     private fun loadMessages() {
@@ -82,6 +94,18 @@ class ChatViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 android.util.Log.e("ChatVM", "loadMessages failed", e)
+            }
+        }
+    }
+
+    /** C4 — Fetch unified diff for a message and store in AppState */
+    private fun loadDiff(messageId: String, directory: String) {
+        viewModelScope.launch {
+            try {
+                val diffs = client.getSessionDiff(sessionId, messageId, directory)
+                store.dispatch(AppEvent.SessionDiffLoaded(messageId, diffs))
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "loadDiff failed for $messageId", e)
             }
         }
     }

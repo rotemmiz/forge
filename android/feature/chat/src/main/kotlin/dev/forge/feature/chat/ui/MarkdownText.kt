@@ -210,14 +210,14 @@ private fun HeaderBlock(block: MdBlock.Header) {
             text = block.text,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
-            color = OnSurface,
+            color = HeaderPurple,
             modifier = Modifier.padding(start = 14.dp, top = 12.dp, end = 14.dp, bottom = 2.dp),
         )
         2 -> Text(
             text = block.text,
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
-            color = OnSurface,
+            color = HeaderPurple,
             modifier = Modifier.padding(start = 14.dp, top = 10.dp, end = 14.dp, bottom = 2.dp),
         )
         else -> Text(

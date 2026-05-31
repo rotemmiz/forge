@@ -63,6 +63,9 @@ fun ForgeNavGraph() {
                 onOpenTerminal = { directory ->
                     navController.navigate(Screen.Terminal.route(directory))
                 },
+                onNavigateToSession = { newSessionId ->
+                    navController.navigate(Screen.Chat.route(newSessionId))
+                },
             )
         }
 

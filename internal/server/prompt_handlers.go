@@ -12,6 +12,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/permission"
 	"github.com/rotemmiz/forge/internal/engine/runstate"
 	"github.com/rotemmiz/forge/internal/instance"
+	"github.com/rotemmiz/forge/internal/resource"
 	"github.com/rotemmiz/forge/internal/session"
 )
 
@@ -64,8 +65,11 @@ func (b promptBody) toInput(sessionID string) engine.PromptInput {
 }
 
 // buildEngine constructs the per-request engine from shared deps + the request's
-// instance (its bus, permission manager, and per-session run lock).
-func buildEngine(opts Options, inst *instance.Context, directory string) *engine.Engine {
+// instance (its bus, permission manager, and per-session run lock). rulesets are
+// the resolved agent's permission rules (the executor evaluates tool calls
+// against them; an unmatched call defaults to "ask" and blocks on a
+// permission.asked event).
+func buildEngine(opts Options, inst *instance.Context, directory string, rulesets []permission.Ruleset) *engine.Engine {
 	return engine.New(engine.Config{
 		Store:       opts.Messages,
 		Catalog:     opts.Catalog,
@@ -76,8 +80,39 @@ func buildEngine(opts Options, inst *instance.Context, directory string) *engine
 		Bus:         inst.Bus,
 		RunState:    inst.RunState,
 		Directory:   directory,
-		Rulesets:    allowAllRulesets,
+		Rulesets:    rulesets,
 	})
+}
+
+// resolveAgent loads the directory's agents and returns the one named by the
+// prompt (defaulting to "build"); an unknown name falls back to "build" so a
+// prompt always has a runnable agent (agent/agent.ts list/default semantics).
+func resolveAgent(directory, name string) resource.Agent {
+	if name == "" {
+		name = "build"
+	}
+	agents := resource.LoadAgents(directory, loadConfig(directory))
+	var build resource.Agent
+	for _, a := range agents {
+		switch a.Name {
+		case name:
+			return a
+		case "build":
+			build = a
+		}
+	}
+	return build
+}
+
+// agentRulesets wraps the agent's permission ruleset for the engine. A resolved
+// agent's rules are used as-is (build is allow-all; a restrictive agent leaves
+// tools to "ask"); only a wholly-unresolved agent falls back to allow-all so
+// tools stay usable.
+func agentRulesets(a resource.Agent) []permission.Ruleset {
+	if a.Name == "" {
+		return allowAllRulesets
+	}
+	return []permission.Ruleset{a.Permission}
 }
 
 func promptHandler(opts Options, async bool) http.HandlerFunc {
@@ -91,13 +126,25 @@ func promptHandler(opts Options, async bool) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "BadRequest", "invalid JSON body")
 			return
 		}
+		directory := DirectoryFromContext(r.Context())
+		agent := resolveAgent(directory, body.Agent)
+
+		// The agent supplies defaults the request may override: its model (when
+		// the request omits one) and its system prompt (when none is given).
+		if body.Model.ProviderID == "" && agent.Model != nil {
+			body.Model.ProviderID = agent.Model.ProviderID
+			body.Model.ModelID = agent.Model.ModelID
+		}
 		if body.Model.ProviderID == "" || body.Model.ModelID == "" {
 			writeError(w, http.StatusBadRequest, "BadRequest", "model.providerID and model.modelID are required")
 			return
 		}
-		directory := DirectoryFromContext(r.Context())
+		if body.System == "" {
+			body.System = agent.Prompt
+		}
+
 		inst := opts.Instances.Get(directory)
-		eng := buildEngine(opts, inst, directory)
+		eng := buildEngine(opts, inst, directory, agentRulesets(agent))
 
 		// Detach from the request context: a client disconnect must NOT abort the
 		// run — only POST /abort cancels it (via the run lock), matching opencode.

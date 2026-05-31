@@ -118,6 +118,56 @@ func TestParseAgent_BodyWinsOverFrontmatterPrompt(t *testing.T) {
 	}
 }
 
+func TestParsePermissionConfig(t *testing.T) {
+	// Bare action string → {"*": action}.
+	rs := parsePermissionConfig("ask")
+	if len(rs) != 1 || rs[0].Permission != "*" || rs[0].Pattern != "*" || rs[0].Action != permission.ActionAsk {
+		t.Fatalf("string form = %+v", rs)
+	}
+	// {key: action} map.
+	rs = parsePermissionConfig(map[string]any{"bash": "ask", "read": "allow"})
+	got := map[string]permission.Action{}
+	for _, r := range rs {
+		if r.Pattern != "*" {
+			t.Errorf("expected * pattern, got %q", r.Pattern)
+		}
+		got[r.Permission] = r.Action
+	}
+	if got["bash"] != permission.ActionAsk || got["read"] != permission.ActionAllow {
+		t.Fatalf("map form = %+v", rs)
+	}
+	// {key: {pattern: action}} nested map.
+	rs = parsePermissionConfig(map[string]any{"bash": map[string]any{"git *": "allow", "*": "deny"}})
+	byPat := map[string]permission.Action{}
+	for _, r := range rs {
+		byPat[r.Pattern] = r.Action
+	}
+	if byPat["git *"] != permission.ActionAllow || byPat["*"] != permission.ActionDeny {
+		t.Fatalf("nested form = %+v", rs)
+	}
+	// Invalid action is dropped.
+	if rs := parsePermissionConfig(map[string]any{"bash": "maybe"}); len(rs) != 0 {
+		t.Fatalf("invalid action should be dropped, got %+v", rs)
+	}
+}
+
+func TestParseAgent_PermissionFrontmatterAfterTools(t *testing.T) {
+	// tools denies everything; permission then re-allows read (last match wins).
+	a := parseAgent([]byte("---\ntools:\n  \"*\": false\npermission:\n  read: allow\n---\nx"))
+	var starDeny, readAllow bool
+	for _, r := range a.Permission {
+		if r.Permission == "*" && r.Action == permission.ActionDeny {
+			starDeny = true
+		}
+		if r.Permission == "read" && r.Action == permission.ActionAllow {
+			readAllow = true
+		}
+	}
+	if !starDeny || !readAllow {
+		t.Fatalf("combined tools+permission wrong: %+v", a.Permission)
+	}
+}
+
 func TestLoadAgents_DisableRemovesBuiltin(t *testing.T) {
 	dir := project(t)
 	agents := LoadAgents(dir, map[string]any{

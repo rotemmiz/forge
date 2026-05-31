@@ -12,7 +12,17 @@ import dev.forge.core.store.OptimisticMessage
 import dev.forge.core.store.ConnectionState
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
+
+/** One todo as emitted by the `todowrite` tool (status: pending|in_progress|completed|cancelled). */
+data class TodoItem(
+    val content: String,
+    val status: String,
+    val priority: String? = null,
+)
 
 data class ChatUiState(
     val session: Session? = null,
@@ -23,6 +33,11 @@ data class ChatUiState(
     val pendingPermissions: List<PermissionRequest> = emptyList(),
     val pendingQuestions: List<QuestionRequest> = emptyList(),
     val sessionStatus: String = "idle",
+    val todos: List<TodoItem> = emptyList(),
+    /** Agent name driving the status-strip mode chip (e.g. "build", "plan"). */
+    val agentMode: String? = null,
+    val modelID: String? = null,
+    val providerID: String? = null,
     val isLoading: Boolean = false,
     val isSending: Boolean = false,
 )
@@ -43,15 +58,23 @@ class ChatViewModel @Inject constructor(
     val uiState: StateFlow<ChatUiState> = store.state
         .map { appState ->
             val session = appState.sessions.firstOrNull { it.id == sessionId }
+            val messages = appState.messages[sessionId] ?: emptyList()
+            // Status-strip context comes from the most recent assistant turn that
+            // carries a model/agent (the live "what's running" state).
+            val lastModelled = messages.lastOrNull { it.role == "assistant" && it.model != null }
             ChatUiState(
                 session = session,
-                messages = appState.messages[sessionId] ?: emptyList(),
+                messages = messages,
                 parts = appState.parts,
                 diffs = appState.diffs,
                 optimisticMessages = appState.optimisticMessages[sessionId] ?: emptyList(),
                 pendingPermissions = appState.permissions[sessionId] ?: emptyList(),
                 pendingQuestions = appState.questions[sessionId] ?: emptyList(),
                 sessionStatus = appState.sessionStatus[sessionId] ?: "idle",
+                todos = extractTodos(messages, appState.parts),
+                agentMode = lastModelled?.agent ?: messages.lastOrNull { it.agent != null }?.agent,
+                modelID = lastModelled?.model?.modelID,
+                providerID = lastModelled?.model?.providerID,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
@@ -132,6 +155,30 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** Overflow → Fork: branch this session; [onForked] receives the new session id. */
+    fun forkSession(onForked: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val forked = client.forkSession(sessionId)
+                onForked(forked.id)
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "forkSession failed", e)
+            }
+        }
+    }
+
+    /** Overflow → Delete: remove this session; [onDeleted] runs on success (navigate back). */
+    fun deleteSession(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                client.deleteSession(sessionId)
+                onDeleted()
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "deleteSession failed", e)
+            }
+        }
+    }
+
     /** A8 — Permission reply */
     fun replyPermission(requestId: String, allow: Boolean) {
         viewModelScope.launch {
@@ -160,4 +207,37 @@ class ChatViewModel @Inject constructor(
             } catch (_: Exception) { }
         }
     }
+}
+
+/**
+ * Returns the todo list from the most recent `todowrite` tool call in the
+ * session. Live SSE parts (keyed by messageID) supersede REST-loaded parts.
+ * Messages are already ID-sorted, so the last match wins.
+ */
+private fun extractTodos(messages: List<Message>, parts: Map<String, List<Part>>): List<TodoItem> {
+    var latest: List<TodoItem> = emptyList()
+    for (msg in messages) {
+        val msgParts = parts[msg.id] ?: msg.parts
+        for (part in msgParts) {
+            if (part !is ToolPart || part.tool != "todowrite") continue
+            val input = when (val s = part.state) {
+                is ToolStatePending -> s.input
+                is ToolStateRunning -> s.input
+                is ToolStateCompleted -> s.input
+                is ToolStateError -> s.input
+            } ?: continue
+            val arr = input["todos"] as? JsonArray ?: continue
+            val items = arr.mapNotNull { el ->
+                val obj = el.jsonObject
+                val content = obj["content"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                TodoItem(
+                    content = content,
+                    status = obj["status"]?.jsonPrimitive?.content ?: "pending",
+                    priority = obj["priority"]?.jsonPrimitive?.content,
+                )
+            }
+            if (items.isNotEmpty()) latest = items
+        }
+    }
+    return latest
 }

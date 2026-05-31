@@ -7,7 +7,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,6 +35,7 @@ fun ChatScreen(
     sessionId: String,
     onNavigateBack: () -> Unit,
     onOpenTerminal: (directory: String) -> Unit = {},
+    onNavigateToSession: (sessionId: String) -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -57,6 +61,8 @@ fun ChatScreen(
     val pendingQuestion = uiState.pendingQuestions.firstOrNull()
 
     val sessionDirectory = uiState.session?.directory
+    var showInfoSheet by remember { mutableStateOf(false) }
+    var showOverflow by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Surface,
@@ -112,8 +118,25 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { /* session info sheet — Phase C */ }) {
-                            Icon(Icons.Default.Info, contentDescription = "Info", tint = OnSurfaceVariant)
+                        IconButton(onClick = { showInfoSheet = true }) {
+                            Icon(Icons.Default.Info, contentDescription = "Session info", tint = OnSurfaceVariant)
+                        }
+                        Box {
+                            IconButton(onClick = { showOverflow = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More", tint = OnSurfaceVariant)
+                            }
+                            OverflowMenu(
+                                expanded = showOverflow,
+                                onDismiss = { showOverflow = false },
+                                onFork = {
+                                    showOverflow = false
+                                    viewModel.forkSession { newId -> onNavigateToSession(newId) }
+                                },
+                                onDelete = {
+                                    showOverflow = false
+                                    viewModel.deleteSession { onNavigateBack() }
+                                },
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -127,6 +150,13 @@ fun ChatScreen(
         bottomBar = {
             Column(Modifier.background(Surface)) {
                 HorizontalDivider(color = Hairline)
+                StatusStrip(
+                    mode = uiState.agentMode,
+                    model = uiState.modelID,
+                    provider = uiState.providerID,
+                    tokens = uiState.session?.tokens,
+                )
+                HorizontalDivider(color = Hairline)
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
                     enabled = pendingPermission == null && pendingQuestion == null,
@@ -134,25 +164,37 @@ fun ChatScreen(
             }
         },
     ) { padding ->
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .imeNestedScroll(),
+                .padding(padding),
         ) {
-            items(uiState.messages, key = { it.id }) { message ->
-                // SSE live parts supersede REST-loaded parts when present
-                val liveParts = uiState.parts[message.id]
-                MessageBlock(
-                    message = message,
-                    parts = if (liveParts != null) liveParts else message.parts,
-                    diffs = uiState.diffs,
-                )
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 64.dp), // clear the todo-sheet peek
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imeNestedScroll(),
+            ) {
+                items(uiState.messages, key = { it.id }) { message ->
+                    // SSE live parts supersede REST-loaded parts when present
+                    val liveParts = uiState.parts[message.id]
+                    MessageBlock(
+                        message = message,
+                        parts = if (liveParts != null) liveParts else message.parts,
+                        diffs = uiState.diffs,
+                    )
+                }
+                items(uiState.optimisticMessages, key = { "opt:${it.id}" }) { opt ->
+                    OptimisticMessageBlock(opt)
+                }
             }
-            items(uiState.optimisticMessages, key = { "opt:${it.id}" }) { opt ->
-                OptimisticMessageBlock(opt)
-            }
+
+            // Todos dock — anchored above the status strip / composer
+            TodoSheet(
+                todos = uiState.todos,
+                onOpenTasksBoard = { /* tasks board tab — future */ },
+            )
         }
 
         // A8 — Permission sheet (non-dismissible)
@@ -172,6 +214,37 @@ fun ChatScreen(
                 onReject = { viewModel.rejectQuestion(req.id) },
             )
         }
+
+        if (showInfoSheet) {
+            uiState.session?.let { session ->
+                SessionInfoSheet(session = session, onDismiss = { showInfoSheet = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverflowMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onFork: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceContainerHigh,
+    ) {
+        DropdownMenuItem(
+            text = { Text("Fork session", color = OnSurface) },
+            leadingIcon = { Icon(Icons.Default.CallSplit, contentDescription = null, tint = OnSurfaceVariant) },
+            onClick = onFork,
+        )
+        DropdownMenuItem(
+            text = { Text("Delete session", color = Error) },
+            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Error) },
+            onClick = onDelete,
+        )
     }
 }
 
@@ -183,16 +256,27 @@ private fun MessageBlock(
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         if (message.role == "user") {
-            UserMessageBlock(message, parts, diffs)
+            UserMessageBlock(parts, diffs)
         } else {
-            AssistantMessageBlock(message, parts, diffs)
+            AssistantMessageBlock(parts, diffs)
+        }
+    }
+}
+
+/** Renders a message's parts, grouping consecutive tool calls into one card. */
+@Composable
+private fun StreamParts(parts: List<Part>, diffs: Map<String, List<SnapshotFileDiff>>) {
+    val items = remember(parts) { groupRenderItems(parts) }
+    items.forEach { item ->
+        when (item) {
+            is RenderItem.Tools -> ToolRowGroup(item.parts)
+            is RenderItem.Single -> PartRenderer(item.part, diffs = diffs)
         }
     }
 }
 
 @Composable
 private fun UserMessageBlock(
-    message: Message,
     parts: List<Part>,
     diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
 ) {
@@ -200,19 +284,18 @@ private fun UserMessageBlock(
         // 2dp primary blue left accent bar
         Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(Primary))
         Column(modifier = Modifier.padding(start = 13.dp, end = 14.dp)) {
-            parts.forEach { part -> PartRenderer(part, diffs = diffs) }
+            StreamParts(parts, diffs)
         }
     }
 }
 
 @Composable
 private fun AssistantMessageBlock(
-    message: Message,
     parts: List<Part>,
     diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
 ) {
     Column(modifier = Modifier.padding(horizontal = 0.dp)) {
-        parts.forEach { part -> PartRenderer(part, diffs = diffs) }
+        StreamParts(parts, diffs)
     }
 }
 

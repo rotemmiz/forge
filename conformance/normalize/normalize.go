@@ -77,6 +77,14 @@ var (
 	// scenarios' dirs — this pattern scrubs them all. The prefix is harness-owned,
 	// so it never appears in real API payloads.
 	confDirRe = regexp.MustCompile(`[/\w.-]*forge-conf-\d+`)
+	// confHomeRe matches the per-run temp HOME the harness gives each opencode
+	// process (run-conformance.sh: HOME="$(mktemp -d)"). opencode bakes this
+	// absolute HOME into agent permission patterns (e.g.
+	// "$HOME/.local/share/opencode/tool-output/*"), so two runs diff on the
+	// random suffix. mktemp's signature is a "tmp.<random>" segment under /tmp
+	// (Linux) or $TMPDIR (/var/folders/.../T on macOS); only the volatile HOME
+	// prefix is collapsed, leaving the stable ".../.local/share/opencode/…" tail.
+	confHomeRe = regexp.MustCompile(`(/private)?(/var/folders/[^/]+/[^/]+/T|/tmp)/tmp\.[A-Za-z0-9]+`)
 )
 
 // Normalizer replaces volatile values. PathReplacements maps absolute path
@@ -206,8 +214,10 @@ func (n *Normalizer) replacePaths(s string) string {
 		s = strings.ReplaceAll(s, p, n.PathReplacements[p])
 	}
 	// Scrub any conformance temp dir not in the explicit replacement set (a
-	// sibling scenario's dir surfacing in the global session list).
+	// sibling scenario's dir surfacing in the global session list) and the
+	// per-run temp HOME baked into agent permission patterns.
 	s = confDirRe.ReplaceAllString(s, pathPlaceholder)
+	s = confHomeRe.ReplaceAllString(s, pathPlaceholder)
 	// Replace timestamps and prefixed ULIDs embedded inside strings (e.g. the
 	// auto title "New session - 2026-...Z" or "Session not found: ses_01J…").
 	s = rfc3339SubRe.ReplaceAllString(s, tsPlaceholder)

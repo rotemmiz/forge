@@ -172,6 +172,22 @@ func TestConfDirScrubbedWhenNotRegistered(t *testing.T) {
 	}
 }
 
+func TestConfHomeScrubbedInPermissionPattern(t *testing.T) {
+	// opencode bakes the per-run temp HOME into agent permission patterns; the
+	// volatile mktemp prefix must collapse while the stable data-dir tail stays.
+	n := New("/tmp/forge-conf-1")
+	for _, home := range []string{
+		"/tmp/tmp.24TAFncWtJ",
+		"/var/folders/q5/abc123/T/tmp.iLVyqTr56n",
+		"/private/var/folders/q5/abc123/T/tmp.iLVyqTr56n",
+	} {
+		got := n.replacePaths(home + "/.local/share/opencode/tool-output/*")
+		if got != "<path>/.local/share/opencode/tool-output/*" {
+			t.Errorf("home %q not scrubbed: got %q", home, got)
+		}
+	}
+}
+
 func TestNormalizeSSE(t *testing.T) {
 	n := New()
 	body := "event: message\n" +

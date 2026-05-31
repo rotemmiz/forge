@@ -39,6 +39,7 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val commands by viewModel.commands.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
     // Only auto-scroll if the user is already near the bottom
@@ -160,6 +161,9 @@ fun ChatScreen(
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
                     enabled = pendingPermission == null && pendingQuestion == null,
+                    commands = commands,
+                    onSearchFiles = { query -> viewModel.searchFiles(query) },
+                    onRunCommand = { name, args -> viewModel.runCommand(name, args) },
                 )
             }
         },

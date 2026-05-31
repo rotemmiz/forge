@@ -115,6 +115,52 @@ class ForgeClient @Inject constructor(
         directory = directory,
     ) { _ -> Unit }
 
+    // ─── Commands / file search ─────────────────────────────────────────────────
+
+    /** GET /command — available slash commands for the directory. */
+    suspend fun listCommands(directory: String? = null): List<CommandInfo> =
+        get("/command", directory = directory) { json ->
+            val arr = json as? JsonArray ?: return@get emptyList()
+            arr.mapNotNull {
+                try { ForgeJson.decodeFromJsonElement(CommandInfo.serializer(), it) } catch (_: Exception) { null }
+            }
+        }
+
+    /** GET /find/file?query= — fuzzy file paths for @-mentions. */
+    suspend fun findFiles(query: String, directory: String? = null, limit: Int = 20): List<String> =
+        withContext(Dispatchers.IO) {
+            val base = baseUrl?.trimEnd('/') ?: error("No server configured")
+            val params = buildString {
+                append("?query=").append(URLEncoder.encode(query, "UTF-8"))
+                append("&limit=").append(limit)
+                directory?.let { append("&directory=").append(URLEncoder.encode(it, "UTF-8")) }
+            }
+            val req = Request.Builder().url("$base/find/file$params").also {
+                directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
+            }.get().build()
+            httpClient.newCall(req).execute().use { resp ->
+                val body = resp.body?.string() ?: "[]"
+                if (!resp.isSuccessful) error("HTTP ${resp.code} for GET /find/file: $body")
+                val arr = ForgeJson.parseToJsonElement(body) as? JsonArray ?: return@use emptyList()
+                arr.mapNotNull { it.jsonPrimitive.contentOrNull }
+            }
+        }
+
+    /** POST /session/{id}/command — run a slash command with arguments. */
+    suspend fun runCommand(
+        sessionId: String,
+        command: String,
+        arguments: String,
+        directory: String? = null,
+    ) = post(
+        path = "/session/$sessionId/command",
+        body = buildJsonObject {
+            put("command", command)
+            put("arguments", arguments)
+        },
+        directory = directory,
+    ) { _ -> Unit }
+
     // ─── PTY ──────────────────────────────────────────────────────────────────
 
     /**

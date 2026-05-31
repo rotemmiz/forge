@@ -101,6 +101,29 @@ class ForgeClient @Inject constructor(
             directory = directory,
         ) { _ -> Unit }
 
+    // ─── Diff ─────────────────────────────────────────────────────────────────
+
+    suspend fun getSessionDiff(
+        sessionId: String,
+        messageId: String,
+        directory: String,
+    ): List<SnapshotFileDiff> = withContext(Dispatchers.IO) {
+        val base = baseUrl?.trimEnd('/') ?: error("No server configured")
+        val url = "$base/session/$sessionId/diff" +
+            "?messageID=${URLEncoder.encode(messageId, "UTF-8")}" +
+            "&directory=${URLEncoder.encode(directory, "UTF-8")}"
+        val req = Request.Builder().url(url)
+            .header("X-Opencode-Directory", URLEncoder.encode(directory, "UTF-8"))
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: "[]"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for GET diff: $body")
+            val arr = ForgeJson.parseToJsonElement(body) as? JsonArray ?: return@use emptyList()
+            arr.map { ForgeJson.decodeFromJsonElement(SnapshotFileDiff.serializer(), it) }
+        }
+    }
+
     // ─── Permission ───────────────────────────────────────────────────────────
 
     suspend fun replyPermission(requestId: String, allow: Boolean) =

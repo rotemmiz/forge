@@ -103,6 +103,10 @@ fun reduce(state: AppState, event: AppEvent): AppState = when (event) {
         )
     }
 
+    is AppEvent.SessionDiffLoaded -> state.copy(
+        diffs = state.diffs + (event.messageId to event.diffs)
+    )
+
     is AppEvent.Unknown -> state
 }
 

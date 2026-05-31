@@ -1,6 +1,5 @@
 package dev.forge.feature.chat.ui
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,13 +30,17 @@ import dev.forge.core.model.*
  * Design follows design/android/README.md — Terminal-Material direction.
  */
 @Composable
-fun PartRenderer(part: Part, modifier: Modifier = Modifier) {
+fun PartRenderer(
+    part: Part,
+    modifier: Modifier = Modifier,
+    diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
+) {
     when (part) {
         is TextPart -> TextPartView(part, modifier)
         is ReasoningPart -> ReasoningPartView(part, modifier)
         is ToolPart -> ToolPartView(part, modifier)
         is FilePart -> FilePartView(part, modifier)
-        is PatchPart -> PatchPartView(part, modifier)
+        is PatchPart -> PatchPartView(part, modifier, diffs[part.messageID] ?: emptyList())
         is StepStartPart, is StepFinishPart -> Unit  // invisible separators
         is UnknownPart -> Unit
     }
@@ -202,7 +205,11 @@ private fun ToolStateDetail(state: ToolState) {
 // ─── Patch / Diff ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun PatchPartView(part: PatchPart, modifier: Modifier = Modifier) {
+private fun PatchPartView(
+    part: PatchPart,
+    modifier: Modifier = Modifier,
+    fileDiffs: List<SnapshotFileDiff> = emptyList(),
+) {
     var expanded by remember { mutableStateOf(false) }
     val fileCount = part.files.size
 
@@ -248,30 +255,94 @@ private fun PatchPartView(part: PatchPart, modifier: Modifier = Modifier) {
             )
         }
 
-        if (expanded && part.files.isNotEmpty()) {
+        if (expanded && (fileDiffs.isNotEmpty() || part.files.isNotEmpty())) {
             HorizontalDivider(color = Hairline)
-            part.files.forEach { file ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = null,
-                        tint = OnSurfaceFaint,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = file,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        color = OnSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
+            if (fileDiffs.isNotEmpty()) {
+                UnifiedDiffView(diffs = fileDiffs)
+            } else {
+                // Diff not yet loaded — show file list as placeholder
+                part.files.forEach { file ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = OnSurfaceFaint,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = file,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            color = OnSurfaceVariant,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── Unified Diff ─────────────────────────────────────────────────────────────
+
+private val DiffAddBg = Color(0x228CC265)
+private val DiffRemoveBg = Color(0x22E0606E)
+private val DiffHunkBg = Color(0x1AB08CD4)
+
+@Composable
+fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(SurfaceContainerLowest),
+    ) {
+        diffs.forEach { diff ->
+            // File header
+            Text(
+                text = diff.file ?: "",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = OnSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceContainerHigh)
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+            )
+            // Patch lines with color coding
+            val patch = diff.patch
+            if (!patch.isNullOrEmpty()) {
+                val scrollState = rememberScrollState()
+                Box(modifier = Modifier.horizontalScroll(scrollState)) {
+                    Column {
+                        patch.lines().forEach { line ->
+                            val (bg, fg) = when {
+                                line.startsWith("+++") || line.startsWith("---") || line.startsWith("Index:") || line.startsWith("===") ->
+                                    Color.Transparent to OnSurfaceFaint
+                                line.startsWith("+") -> DiffAddBg to Tertiary
+                                line.startsWith("-") -> DiffRemoveBg to Error
+                                line.startsWith("@@") -> DiffHunkBg to HeaderPurple
+                                else -> Color.Transparent to OnSurfaceVariant
+                            }
+                            Text(
+                                text = line.ifEmpty { " " },
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = fg,
+                                softWrap = false,
+                                modifier = Modifier
+                                    .background(bg)
+                                    .padding(horizontal = 12.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
                 }
             }
         }

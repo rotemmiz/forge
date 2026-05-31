@@ -24,6 +24,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -168,25 +170,23 @@ fun PromptInput(
             }
         }
 
-        // One bordered container holding the accent bar, field, attach + send
-        // (design §5 — not three separate widgets).
+        // One bordered container holding the field, attach + send (design §5).
+        // The 2dp primary rail is drawn relative to the measured height so it
+        // always spans the box; children are centered vertically.
         val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
+        val rail = Primary
+        val shape = RoundedCornerShape(6.dp)
         Row(
-            verticalAlignment = Alignment.Bottom,
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(shape)
                 .background(SurfaceContainer)
-                .border(1.dp, Hairline, RoundedCornerShape(6.dp)),
+                .border(1.dp, Hairline, shape)
+                .drawBehind { drawRect(rail, size = Size(2.dp.toPx(), size.height)) }
+                .padding(start = 13.dp),
         ) {
-            // 2dp primary left accent bar (the TUI prompt rail)
-            Box(
-                modifier = Modifier
-                    .width(2.dp)
-                    .heightIn(min = 48.dp)
-                    .background(Primary),
-            )
             BasicTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -199,7 +199,7 @@ fun PromptInput(
                 visualTransformation = composerTokenTransformation(Secondary, LinkCyan),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 11.dp, end = 6.dp, top = 14.dp, bottom = 14.dp),
+                    .padding(end = 4.dp, top = 13.dp, bottom = 13.dp),
                 decorationBox = { inner ->
                     if (text.isEmpty()) {
                         Text(
@@ -213,7 +213,7 @@ fun PromptInput(
                 },
             )
 
-            // Attach (add) icon — inside the field, on the right
+            // Attach (add) icon — vertically centered by the Row
             IconButton(
                 onClick = { filePicker.launch("*/*") },
                 enabled = enabled,
@@ -227,9 +227,10 @@ fun PromptInput(
                 )
             }
 
-            // Send — a 40dp blue square inside a 48dp touch target
+            // Send — 40dp blue square in a 48dp touch target, centered by the Row
             Box(
                 modifier = Modifier
+                    .padding(end = 4.dp)
                     .size(48.dp)
                     .clickable(enabled = canSend) {
                         val trimmed = text.trim()
@@ -242,7 +243,7 @@ fun PromptInput(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(shape)
                         .background(if (canSend) Primary else Hairline),
                     contentAlignment = Alignment.Center,
                 ) {

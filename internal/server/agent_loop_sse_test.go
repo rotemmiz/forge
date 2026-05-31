@@ -155,29 +155,19 @@ func TestAgentLoopSSESequence(t *testing.T) {
 		}
 	}
 
-	// Collect events until the prompt returns, then drain what's buffered.
-	status := 0
-collect:
-	for {
+	// Collect events until the COMPLETION event arrives — SSE delivery lags the
+	// synchronous prompt's return, so waiting on `done` alone would race and miss
+	// events. Once the assistant-complete frame is seen, confirm the prompt
+	// returned 200 (run quiesced) before asserting/teardown.
+	for !sawAssistantDone {
 		select {
 		case ev := <-events:
 			inspect(ev)
-		case status = <-done:
-			break collect
 		case <-ctx.Done():
 			t.Fatalf("timeout; sawUser=%v sawDelta=%v done=%v", sawUser, sawDelta, sawAssistantDone)
 		}
 	}
-	for {
-		select {
-		case ev := <-events:
-			inspect(ev)
-		default:
-			goto asserts
-		}
-	}
-asserts:
-	if status != http.StatusOK {
+	if status := <-done; status != http.StatusOK {
 		t.Fatalf("prompt status = %d", status)
 	}
 	if !sawUser {

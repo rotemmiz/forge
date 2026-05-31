@@ -54,6 +54,10 @@ scripts/run-conformance.sh self
 
 Early development. The wire protocol conformance harness is the correctness gate. Passing `make selfdiff` clean is required before merging any change that touches an API endpoint.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Further Reading
 
 - [`plans/00-masterplan.md`](plans/00-masterplan.md) — vision, frozen wire contract, build sequence

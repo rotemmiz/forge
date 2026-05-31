@@ -57,6 +57,16 @@ data class ToolPart(
 ) : Part()
 
 @Serializable
+data class PatchPart(
+    override val id: String,
+    override val sessionID: String,
+    override val messageID: String,
+    override val type: String = "patch",
+    val hash: String,
+    val files: List<String> = emptyList(),
+) : Part()
+
+@Serializable
 data class StepStartPart(
     override val id: String,
     override val sessionID: String,

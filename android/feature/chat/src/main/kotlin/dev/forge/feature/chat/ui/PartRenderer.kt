@@ -37,6 +37,7 @@ fun PartRenderer(part: Part, modifier: Modifier = Modifier) {
         is ReasoningPart -> ReasoningPartView(part, modifier)
         is ToolPart -> ToolPartView(part, modifier)
         is FilePart -> FilePartView(part, modifier)
+        is PatchPart -> PatchPartView(part, modifier)
         is StepStartPart, is StepFinishPart -> Unit  // invisible separators
         is UnknownPart -> Unit
     }
@@ -47,15 +48,7 @@ fun PartRenderer(part: Part, modifier: Modifier = Modifier) {
 @Composable
 private fun TextPartView(part: TextPart, modifier: Modifier = Modifier) {
     if (part.text.isBlank()) return
-    Text(
-        text = part.text,
-        style = MaterialTheme.typography.bodyMedium.copy(
-            fontSize = 14.5.sp,
-            lineHeight = 22.sp,
-        ),
-        color = OnSurface,
-        modifier = modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-    )
+    MarkdownText(text = part.text, modifier = modifier.padding(vertical = 2.dp))
 }
 
 // ─── Reasoning ────────────────────────────────────────────────────────────────
@@ -203,6 +196,85 @@ private fun ToolStateDetail(state: ToolState) {
                 .horizontalScroll(rememberScrollState())
                 .padding(12.dp),
         )
+    }
+}
+
+// ─── Patch / Diff ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun PatchPartView(part: PatchPart, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    val fileCount = part.files.size
+
+    Column(
+        modifier = modifier
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(SurfaceContainer)
+            .border(1.dp, OutlineVariant, RoundedCornerShape(8.dp)),
+    ) {
+        // Header — amber tint when expanded (active state)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (expanded) Modifier.background(
+                        color = Secondary.copy(alpha = 0.10f),
+                    ) else Modifier
+                )
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = OnSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = if (fileCount == 1) part.files.first().substringAfterLast('/') else "$fileCount files changed",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = Tertiary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = part.hash.take(7),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = OnSurfaceFaint,
+            )
+        }
+
+        if (expanded && part.files.isNotEmpty()) {
+            HorizontalDivider(color = Hairline)
+            part.files.forEach { file ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = null,
+                        tint = OnSurfaceFaint,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = file,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = OnSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
 }
 

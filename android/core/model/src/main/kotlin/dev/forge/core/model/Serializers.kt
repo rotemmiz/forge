@@ -25,6 +25,7 @@ object PartSerializer : KSerializer<Part> {
             "reasoning" -> format.decodeFromJsonElement(ReasoningPart.serializer(), json)
             "file" -> format.decodeFromJsonElement(FilePart.serializer(), json)
             "tool" -> format.decodeFromJsonElement(ToolPartJson.serializer(), json).toPart()
+            "patch" -> format.decodeFromJsonElement(PatchPart.serializer(), json)
             "step-start" -> StepStartPart(id, sessionID, messageID)
             "step-finish" -> StepFinishPart(id, sessionID, messageID)
             else -> UnknownPart(id, sessionID, messageID, type)

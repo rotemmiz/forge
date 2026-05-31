@@ -22,7 +22,6 @@ import dev.forge.core.model.Message
 import dev.forge.core.model.Part
 import dev.forge.core.store.OptimisticMessage
 import dev.forge.feature.chat.ChatViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -33,7 +32,6 @@ fun ChatScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
 
     // Only auto-scroll if the user is already near the bottom
     val atBottom by remember {

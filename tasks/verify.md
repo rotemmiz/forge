@@ -437,6 +437,26 @@ Fuzzy file/dir search backing the TUI's @-mention picker (plan 04 M8); was 501 b
       parsing .gitignore like opencode's `rg --files`, so results may include files .gitignore would
       hide. Confirm acceptable, or flag for the optional .gitignore-aware walker (PR-3/plan 04).
 
+## Forge gap-closing PR-3 — GET /provider, /agent, /command (2026-05-31, branch feat/resource-endpoints)
+Resource loaders (plan 04 M3/M4/M7/M8): all three were 501 before. New package internal/resource
+(built-in agents + .opencode/agent(s)|command(s) markdown loaders + models.dev provider list with
+auth.json/env connected detection). Flips the TUI's model switcher, agents modal, and slash commands
+to Forge.
+- [x] (automated 2026-05-31) Live-smoke vs opencode at its own repo dir: Forge loads the project's
+      .opencode agents (duplicate-pr, triage) and all 8 .opencode commands identically; /provider
+      `all` count matches opencode (137) and `opencode` shows connected via the shared auth.json.
+- [ ] EYEBALL SWITCHERS: in a TUI-against-Forge session, open the model switcher (confirm connected
+      providers' models list), the agents modal (`/agents` — build/plan/general/explore + any project
+      agents), and slash commands (`/` — project commands). Confirm they populate from Forge.
+- [ ] NOTE (divergences, see known-divergences.json): /agent built-ins carry a simple allow-all
+      permission (not opencode's env-specific patterns + prompts) and omit flag-gated `scout`;
+      /command returns only .opencode/config commands (opencode also has built-in/MCP/skill commands);
+      /provider `connected` depends on which provider creds are in the daemon's env/auth.json.
+- [ ] PERMISSION OVERLAY still needs wiring: PR-3 loads agent permission rulesets but the HTTP prompt
+      path (`prompt_handlers.go`) still uses allow-all, so live `permission.asked` doesn't fire yet.
+      Consuming the loaded agent's rulesets in the engine is a separate follow-up (engine does not yet
+      resolve agents by name). Flag if you want that prioritized next.
+
 ## Pre-existing conformance note (NOT Phase 3)
 - [ ] `session-create-list` still self-diffs (GET /session returns a project-scoped, accumulating
       session list — len differs between two fresh runs because sessions persist in the repo's

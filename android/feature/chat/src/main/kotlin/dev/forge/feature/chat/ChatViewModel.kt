@@ -112,17 +112,22 @@ class ChatViewModel @Inject constructor(
                 .filter { it is ConnectionState.Connected }
                 .collect { loadMessages() }
         }
-        // C4 — Watch for new PatchParts and load diff content for each one not yet fetched
+        // C4 — Watch for new PatchParts and load diff content for each one not yet
+        // fetched. Parts are keyed by messageID, so scan this session's messages
+        // (live SSE parts supersede REST-loaded parts).
         viewModelScope.launch {
             store.state.collect { appState ->
                 val dir = appState.sessions.firstOrNull { it.id == sessionId }?.directory ?: return@collect
-                appState.parts[sessionId]
-                    ?.filterIsInstance<PatchPart>()
-                    ?.filter { it.messageID !in appState.diffs && it.messageID !in _diffInFlight }
-                    ?.forEach { patch ->
-                        _diffInFlight.add(patch.messageID)
-                        loadDiff(patch.messageID, dir)
-                    }
+                val msgs = appState.messages[sessionId] ?: return@collect
+                msgs.forEach { msg ->
+                    val parts = appState.parts[msg.id] ?: msg.parts
+                    parts.filterIsInstance<PatchPart>()
+                        .filter { it.messageID !in appState.diffs && it.messageID !in _diffInFlight }
+                        .forEach { patch ->
+                            _diffInFlight.add(patch.messageID)
+                            loadDiff(patch.messageID, dir)
+                        }
+                }
             }
         }
     }

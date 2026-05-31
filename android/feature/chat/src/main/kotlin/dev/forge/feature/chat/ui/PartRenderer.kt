@@ -228,14 +228,21 @@ private val DiffAddBg = Color(0x228CC265)
 private val DiffRemoveBg = Color(0x22E0606E)
 private val DiffHunkBg = Color(0x1AB08CD4)
 
+/** Cap on rendered diff lines — these render eagerly (no nested LazyColumn is
+ *  possible inside the scrolling stream), so a huge snapshot would ANR. */
+private const val MAX_DIFF_LINES = 400
+
 @Composable
 fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier) {
+    val totalLines = diffs.sumOf { it.patch?.lines()?.size ?: 0 }
+    var budget = MAX_DIFF_LINES
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(SurfaceContainerLowest),
     ) {
         diffs.forEach { diff ->
+            if (budget <= 0) return@forEach
             // File header — redundant for a single-file card (the card header
             // already names it), so only shown when several files are bundled.
             if (diffs.size > 1) {
@@ -254,17 +261,28 @@ fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier
             // Patch lines — design DiffRow grammar: a 1-char gutter sign column
             // (colored) + body text in onSurface; whole-line tint for add/del,
             // purple hunks, red/cyan ---/+++ headers (design §2).
-            val patch = diff.patch
-            if (!patch.isNullOrEmpty()) {
+            val lines = diff.patch?.lines().orEmpty()
+            if (lines.isNotEmpty()) {
+                val shown = lines.take(budget)
+                budget -= shown.size
                 val scrollState = rememberScrollState()
                 Box(modifier = Modifier.horizontalScroll(scrollState)) {
                     // IntrinsicSize.Max → all rows share the widest line's width,
                     // so add/del tints span the full row (design DiffRow look).
                     Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = 8.dp)) {
-                        patch.lines().forEach { line -> DiffLine(line) }
+                        shown.forEach { line -> DiffLine(line) }
                     }
                 }
             }
+        }
+        if (totalLines > MAX_DIFF_LINES) {
+            Text(
+                text = "… ${totalLines - MAX_DIFF_LINES} more lines",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                color = OnSurfaceFaint,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
     }
 }

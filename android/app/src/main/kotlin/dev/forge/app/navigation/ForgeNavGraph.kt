@@ -1,19 +1,18 @@
 package dev.forge.app.navigation
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import dev.forge.feature.connections.ConnectionsViewModel
 import dev.forge.feature.connections.ui.AddServerScreen
 import dev.forge.feature.chat.ui.ChatScreen
 import dev.forge.feature.sessions.ui.SessionListScreen
 import dev.forge.feature.settings.ui.SettingsScreen
+import dev.forge.feature.terminal.ui.TerminalScreen
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 sealed class Screen(val route: String) {
     data object SessionList : Screen("sessions")
@@ -22,6 +21,10 @@ sealed class Screen(val route: String) {
         fun route(sessionId: String) = "chat/$sessionId"
     }
     data object Settings : Screen("settings")
+    data object Terminal : Screen("terminal/{directory}") {
+        fun route(directory: String) =
+            "terminal/${URLEncoder.encode(directory, "UTF-8")}"
+    }
 }
 
 @Composable
@@ -57,6 +60,9 @@ fun ForgeNavGraph() {
             ChatScreen(
                 sessionId = sessionId,
                 onNavigateBack = { navController.popBackStack() },
+                onOpenTerminal = { directory ->
+                    navController.navigate(Screen.Terminal.route(directory))
+                },
             )
         }
 
@@ -66,6 +72,18 @@ fun ForgeNavGraph() {
                 onAddServer = {
                     navController.navigate(Screen.AddServer.route)
                 },
+            )
+        }
+
+        composable(
+            route = Screen.Terminal.route,
+            arguments = listOf(navArgument("directory") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encodedDir = backStackEntry.arguments?.getString("directory") ?: return@composable
+            val directory = URLDecoder.decode(encodedDir, "UTF-8")
+            TerminalScreen(
+                directory = directory,
+                onBack = { navController.popBackStack() },
             )
         }
     }

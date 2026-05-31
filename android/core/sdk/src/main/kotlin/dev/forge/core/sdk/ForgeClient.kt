@@ -2,6 +2,7 @@ package dev.forge.core.sdk
 
 import dev.forge.core.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -113,6 +114,43 @@ class ForgeClient @Inject constructor(
         },
         directory = directory,
     ) { _ -> Unit }
+
+    // ─── PTY ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Creates a new PTY session on the server.
+     * POST /pty with {"directory": dir} → PtyInfo
+     */
+    suspend fun createPty(directory: String): PtyInfo = post(
+        path = "/pty",
+        body = buildJsonObject { put("directory", directory) },
+    ) { json ->
+        val obj = json.jsonObject
+        PtyInfo(
+            id = obj["id"]?.jsonPrimitive?.content ?: error("PTY response missing id"),
+            title = obj["title"]?.jsonPrimitive?.contentOrNull,
+            status = obj["status"]?.jsonPrimitive?.content ?: "running",
+        )
+    }
+
+    /**
+     * Opens a WebSocket connection to the PTY session and returns a [PtyClient].
+     * ws://host/pty/{ptyId}/connect?auth_token=<base64>
+     * The auth_token is base64(user:pass) or base64(:token).
+     */
+    fun connectPty(ptyId: String, authToken: String): PtyClient {
+        val base = baseUrl?.trimEnd('/') ?: error("No server configured")
+        // Replace http(s):// with ws(s)://
+        val wsBase = base
+            .replace(Regex("^https://"), "wss://")
+            .replace(Regex("^http://"), "ws://")
+        val url = "$wsBase/pty/$ptyId/connect?auth_token=${URLEncoder.encode(authToken, "UTF-8")}"
+        val channel = Channel<ByteArray>(Channel.UNLIMITED)
+        val listener = PtyClient.createListener(channel)
+        val request = Request.Builder().url(url).build()
+        val ws = httpClient.newWebSocket(request, listener)
+        return PtyClient(ws, channel)
+    }
 
     // ─── Diff ─────────────────────────────────────────────────────────────────
 

@@ -109,7 +109,7 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
                 Text("error", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Error)
             } else if (lineCount != null) {
                 Text(
-                    text = "$lineCount lines",
+                    text = if (lineCount == 1) "1 line" else "$lineCount lines",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     color = OnSurfaceFaint,

@@ -159,7 +159,14 @@ fun ChatScreen(
             }
         },
         bottomBar = {
-            Column(Modifier.background(Surface)) {
+            // Surface fills behind the system bars; content is inset above the
+            // gesture-nav bar (and the IME when open) so it isn't clipped on
+            // rounded / gesture-nav screens.
+            Column(
+                Modifier
+                    .background(Surface)
+                    .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
+            ) {
                 HorizontalDivider(color = Hairline)
                 StatusStrip(
                     mode = uiState.agentMode,

@@ -126,7 +126,6 @@ fun PromptInput(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         // ── Autocomplete panels (above the field) ──
@@ -169,92 +168,91 @@ fun PromptInput(
             }
         }
 
-        Row(verticalAlignment = Alignment.Bottom) {
-            // Text field with 2dp primary left accent bar
+        // One bordered container holding the accent bar, field, attach + send
+        // (design §5 — not three separate widgets).
+        val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(SurfaceContainer)
+                .border(1.dp, Hairline, RoundedCornerShape(6.dp)),
+        ) {
+            // 2dp primary left accent bar (the TUI prompt rail)
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .width(2.dp)
                     .heightIn(min = 48.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(SurfaceContainer)
-                    .border(1.dp, Hairline, RoundedCornerShape(6.dp)),
-            ) {
-                Row(Modifier.fillMaxWidth()) {
-                    Box(
-                        modifier = Modifier
-                            .width(2.dp)
-                            .heightIn(min = 48.dp)
-                            .background(Primary),
-                    )
-                    BasicTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        textStyle = TextStyle(
-                            color = OnSurface,
+                    .background(Primary),
+            )
+            BasicTextField(
+                value = text,
+                onValueChange = { text = it },
+                textStyle = TextStyle(
+                    color = OnSurface,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.5.sp,
+                ),
+                cursorBrush = SolidColor(Primary),
+                visualTransformation = composerTokenTransformation(Secondary, LinkCyan),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 11.dp, end = 6.dp, top = 14.dp, bottom = 14.dp),
+                decorationBox = { inner ->
+                    if (text.isEmpty()) {
+                        Text(
+                            "Ask anything…  /  @",
+                            color = OnSurfaceGhost,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 13.5.sp,
-                        ),
-                        cursorBrush = SolidColor(Primary),
-                        visualTransformation = composerTokenTransformation(Secondary, LinkCyan),
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 10.dp, vertical = 12.dp),
-                        decorationBox = { inner ->
-                            if (text.isEmpty()) {
-                                Text(
-                                    "Ask anything…  /  @",
-                                    color = OnSurfaceGhost,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.5.sp,
-                                )
-                            }
-                            inner()
-                        },
-                    )
-                }
-            }
+                        )
+                    }
+                    inner()
+                },
+            )
 
-            Spacer(Modifier.width(6.dp))
-
-            // Paperclip button — always shown, 48dp touch target
+            // Attach (add) icon — inside the field, on the right
             IconButton(
                 onClick = { filePicker.launch("*/*") },
                 enabled = enabled,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(6.dp)),
+                modifier = Modifier.size(44.dp),
             ) {
                 Icon(
                     Icons.Default.AttachFile,
                     contentDescription = "Attach file",
                     tint = if (enabled) OnSurfaceVariant else OnSurfaceFaint,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(19.dp),
                 )
             }
 
-            Spacer(Modifier.width(2.dp))
-
-            // Send button — 48dp blue square (M3 minimum touch target)
-            val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
-            IconButton(
-                onClick = {
-                    val trimmed = text.trim()
-                    onSend(trimmed, pendingAttachments.map { it.part })
-                    text = ""
-                    pendingAttachments = emptyList()
-                },
-                enabled = canSend,
+            // Send — a 40dp blue square inside a 48dp touch target
+            Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (canSend) Primary else Hairline),
+                    .clickable(enabled = canSend) {
+                        val trimmed = text.trim()
+                        onSend(trimmed, pendingAttachments.map { it.part })
+                        text = ""
+                        pendingAttachments = emptyList()
+                    },
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (canSend) OnPrimary else OnSurfaceFaint,
-                    modifier = Modifier.size(20.dp),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (canSend) Primary else Hairline),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        tint = if (canSend) OnPrimary else OnSurfaceFaint,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
             }
         }
     }

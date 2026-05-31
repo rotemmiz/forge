@@ -70,34 +70,23 @@ private fun ReasoningPartView(part: ReasoningPart, modifier: Modifier = Modifier
         t.end?.let { end -> "${(end - t.start)}ms" }
     }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    // Minimal mono line per design (`+ Thought: 740ms`); tap to reveal the
+    // full reasoning. No chevron — the line itself is the affordance.
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = Secondary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)) {
+                append("+ Thought")
+            }
+            duration?.let {
+                withStyle(SpanStyle(color = Secondary, fontFamily = FontFamily.Monospace)) { append(": ") }
+                withStyle(SpanStyle(color = OnSurfaceFaint, fontFamily = FontFamily.Monospace)) { append(it) }
+            }
+        },
+        fontSize = 13.sp,
         modifier = modifier
-            .padding(horizontal = 14.dp, vertical = 2.dp)
-            .clickable { expanded = !expanded },
-    ) {
-        Text(
-            text = buildAnnotatedString {
-                withStyle(SpanStyle(color = Secondary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)) {
-                    append("+ Thought")
-                }
-                duration?.let {
-                    append(" ")
-                    withStyle(SpanStyle(color = OnSurfaceFaint, fontFamily = FontFamily.Monospace)) {
-                        append(it)
-                    }
-                }
-            },
-            fontSize = 13.sp,
-        )
-        Spacer(Modifier.weight(1f))
-        Icon(
-            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-            contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = OnSurfaceVariant,
-            modifier = Modifier.size(16.dp),
-        )
-    }
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 14.dp, vertical = 2.dp),
+    )
 
     if (expanded) {
         Text(

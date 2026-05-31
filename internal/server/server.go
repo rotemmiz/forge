@@ -103,6 +103,7 @@ func New(opts Options) (http.Handler, error) {
 		reg(http.MethodGet, "/pty/{ptyID}/connect", ptyConnectHandler(opts.BaseCtx, opts.Instances))
 		registerPermissionRoutes(reg, opts.Instances)
 		registerQuestionRoutes(reg, opts.Instances)
+		registerMCPRoutes(reg, opts.Instances)
 	}
 	if opts.Todos != nil && opts.Sessions != nil {
 		registerTodoRoutes(reg, opts)

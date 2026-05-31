@@ -4,9 +4,11 @@ import (
 	"sync"
 
 	"github.com/rotemmiz/forge/internal/bus"
+	"github.com/rotemmiz/forge/internal/config"
 	"github.com/rotemmiz/forge/internal/engine/permission"
 	"github.com/rotemmiz/forge/internal/engine/question"
 	"github.com/rotemmiz/forge/internal/engine/runstate"
+	"github.com/rotemmiz/forge/internal/mcp"
 	"github.com/rotemmiz/forge/internal/pty"
 )
 
@@ -21,6 +23,8 @@ type Context struct {
 	Permissions *permission.Manager
 	Questions   *question.Manager
 	RunState    *runstate.RunState
+	// MCP holds this instance's configured MCP servers (connection is lazy).
+	MCP *mcp.Manager
 }
 
 // Manager is the directory→instance cache. Instances are created on first use
@@ -57,6 +61,9 @@ func (m *Manager) DisposeAll() {
 		if c.Pty != nil {
 			c.Pty.Shutdown()
 		}
+		if c.MCP != nil {
+			c.MCP.Close()
+		}
 	}
 }
 
@@ -80,7 +87,18 @@ func (m *Manager) Get(directory string) *Context {
 		Permissions: permission.NewManager(instBus),
 		Questions:   question.NewManager(instBus),
 		RunState:    runstate.New(),
+		MCP:         mcp.NewManager(mcpServers(directory)),
 	}
 	m.instances[directory] = c
 	return c
+}
+
+// mcpServers loads the directory's MCP server configs (empty on error, so a bad
+// config never blocks instance creation).
+func mcpServers(directory string) map[string]mcp.Server {
+	cfg, err := config.Load(directory)
+	if err != nil {
+		return nil
+	}
+	return mcp.ParseConfig(cfg)
 }

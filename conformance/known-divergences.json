@@ -68,5 +68,11 @@
     "phase": "C",
     "reason": "The websearch tool is wired against Exa/Parallel hosted MCP endpoints (env-gated: OPENCODE_WEBSEARCH_PROVIDER / EXA_API_KEY / PARALLEL_API_KEY); without a key it returns a clear 'not configured' error. Forge passes only the query (defaults: type=auto, numResults=8, livecrawl=fallback); it does not forward opencode's numResults/livecrawl/type/contextMaxCharacters params, the session_id/model_name to Parallel, or apply opencode's session-checksum default-provider selection (Forge defaults to whichever key is present). It is not behind a permission ask.",
     "track": "TODO: forward full search params + session/model context (plan 04)"
+  },
+  {
+    "scenario": "mcp",
+    "phase": "C",
+    "reason": "MCP foundation (plan 03): config (mcp.* local/remote) is parsed per-instance, local (stdio) servers connect lazily, tools are listed, and GET /mcp reports {connected|disabled|failed} status. Not yet implemented: (1) MCP tools are NOT merged into the agent loop's tool set yet (the engine doesn't call them) — follow-up PR; (2) remote (StreamableHTTP/SSE) transports return 'failed: remote MCP servers are not yet supported'; (3) the needs_auth/needs_client_registration statuses + OAuth flow; (4) the mutating endpoints (POST /mcp add, /mcp/:name/connect|disconnect|auth) remain 501; (5) tools.changed watch/notifications.",
+    "track": "TODO: wire MCP tools into the engine loop, then remote transports + OAuth + mutating endpoints (plan 03)"
   }
 ]

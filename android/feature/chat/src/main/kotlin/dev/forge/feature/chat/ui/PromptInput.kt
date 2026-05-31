@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,6 +35,7 @@ fun PromptInput(
         verticalAlignment = Alignment.Bottom,
         modifier = modifier
             .fillMaxWidth()
+            .imePadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         // Text field with 2dp primary left accent bar
@@ -83,22 +84,23 @@ fun PromptInput(
 
         Spacer(Modifier.width(8.dp))
 
-        // Send button — 40dp blue square
+        // Send button — 48dp blue square (M3 minimum touch target)
         IconButton(
             onClick = {
                 val trimmed = text.trim()
-                if (trimmed.isNotEmpty() && enabled) {
+                if (trimmed.isNotEmpty()) {
                     onSend(trimmed)
                     text = ""
                 }
             },
+            enabled = enabled && text.isNotBlank(),
             modifier = Modifier
-                .size(40.dp)
+                .size(48.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(if (text.isNotBlank() && enabled) Primary else Hairline),
         ) {
             Icon(
-                Icons.Default.Send,
+                Icons.AutoMirrored.Filled.Send,
                 contentDescription = "Send",
                 tint = if (text.isNotBlank() && enabled) OnPrimary else OnSurfaceFaint,
                 modifier = Modifier.size(20.dp),

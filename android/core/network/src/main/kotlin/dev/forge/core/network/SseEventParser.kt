@@ -80,6 +80,7 @@ class SseEventParser @Inject constructor() {
             "text" -> ForgeJson.decodeFromJsonElement(TextPart.serializer(), json)
             "reasoning" -> ForgeJson.decodeFromJsonElement(ReasoningPart.serializer(), json)
             "file" -> ForgeJson.decodeFromJsonElement(FilePart.serializer(), json)
+            "tool" -> ForgeJson.decodeFromJsonElement(ToolPart.serializer(), json)
             "step-start" -> StepStartPart(id, sessionID, messageID)
             "step-finish" -> StepFinishPart(id, sessionID, messageID)
             else -> UnknownPart(id, sessionID, messageID, type)

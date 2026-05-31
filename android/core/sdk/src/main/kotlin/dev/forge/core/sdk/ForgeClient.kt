@@ -79,6 +79,7 @@ class ForgeClient @Inject constructor(
             "text" -> ForgeJson.decodeFromJsonElement(TextPart.serializer(), obj)
             "reasoning" -> ForgeJson.decodeFromJsonElement(ReasoningPart.serializer(), obj)
             "file" -> ForgeJson.decodeFromJsonElement(FilePart.serializer(), obj)
+            "tool" -> ForgeJson.decodeFromJsonElement(ToolPart.serializer(), obj)
             "step-start" -> StepStartPart(id, sessionID, messageID)
             "step-finish" -> StepFinishPart(id, sessionID, messageID)
             else -> UnknownPart(id, sessionID, messageID, type)
@@ -132,10 +133,11 @@ class ForgeClient @Inject constructor(
         val req = Request.Builder().url(url).get().also {
             directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
         }.build()
-        val resp = httpClient.newCall(req).execute()
-        val body = resp.body?.string() ?: "{}"
-        if (!resp.isSuccessful) error("HTTP ${resp.code} for GET $path: $body")
-        parse(ForgeJson.parseToJsonElement(body))
+        httpClient.newCall(req).execute().use { resp ->
+            val body = resp.body?.string() ?: "{}"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for GET $path: $body")
+            parse(ForgeJson.parseToJsonElement(body))
+        }
     }
 
     private suspend fun <T> post(
@@ -149,11 +151,12 @@ class ForgeClient @Inject constructor(
         val req = Request.Builder().url(url).post(reqBody).also {
             directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
         }.build()
-        val resp = httpClient.newCall(req).execute()
-        val respBody = resp.body?.string() ?: "{}"
-        if (!resp.isSuccessful) error("HTTP ${resp.code} for POST $path: $respBody")
-        val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
-        parse(elem)
+        httpClient.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: "{}"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for POST $path: $respBody")
+            val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
+            parse(elem)
+        }
     }
 
     private fun buildUrl(path: String, directory: String?): String {

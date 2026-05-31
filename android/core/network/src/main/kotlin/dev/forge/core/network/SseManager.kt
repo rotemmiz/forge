@@ -66,12 +66,15 @@ class SseManager @Inject constructor(
     }
 
     private var directoryJob: Job? = null
+    private var flushJob: Job? = null
     private var subscribedDirectory: String? = null
 
     fun start() {
         if (running.compareAndSet(false, true)) {
             connectionJob = scope.launch { connectionLoop("/global/event") }
-            scope.launch { flushLoop() }
+            if (flushJob?.isActive != true) {
+                flushJob = scope.launch { flushLoop() }
+            }
         }
     }
 
@@ -79,8 +82,10 @@ class SseManager @Inject constructor(
         if (running.compareAndSet(true, false)) {
             connectionJob?.cancel()
             directoryJob?.cancel()
+            flushJob?.cancel()
             connectionJob = null
             directoryJob = null
+            flushJob = null
         }
     }
 
@@ -137,7 +142,9 @@ class SseManager @Inject constructor(
 
         return suspendCancellableCoroutine { cont ->
             var eventSource: EventSource? = null
-            val heartbeatJob = scope.launch {
+            var repeatHeartbeatJob: Job? = null
+
+            val initialHeartbeatJob = scope.launch {
                 delay(HEARTBEAT_TIMEOUT_MS)
                 Log.w(TAG, "SSE heartbeat timeout — forcing reconnect")
                 eventSource?.cancel()
@@ -147,10 +154,9 @@ class SseManager @Inject constructor(
             val listener = object : EventSourceListener() {
                 override fun onOpen(es: EventSource, response: Response) {
                     lastEventAt = System.currentTimeMillis()
-                    heartbeatJob.cancel()
-                    scope.launch {
+                    initialHeartbeatJob.cancel()
+                    repeatHeartbeatJob = scope.launch {
                         store.dispatch(AppEvent.ServerConnected)
-                        // Reset heartbeat as a repeating timer
                         while (true) {
                             delay(HEARTBEAT_TIMEOUT_MS)
                             if (System.currentTimeMillis() - lastEventAt >= HEARTBEAT_TIMEOUT_MS) {
@@ -175,12 +181,14 @@ class SseManager @Inject constructor(
                 }
 
                 override fun onClosed(es: EventSource) {
-                    heartbeatJob.cancel()
+                    initialHeartbeatJob.cancel()
+                    repeatHeartbeatJob?.cancel()
                     if (cont.isActive) cont.resume(true) {}
                 }
 
                 override fun onFailure(es: EventSource, t: Throwable?, response: Response?) {
-                    heartbeatJob.cancel()
+                    initialHeartbeatJob.cancel()
+                    repeatHeartbeatJob?.cancel()
                     Log.w(TAG, "SSE failure: ${t?.message}")
                     if (cont.isActive) cont.resume(false) {}
                 }
@@ -189,7 +197,8 @@ class SseManager @Inject constructor(
             eventSource = EventSources.createFactory(client).newEventSource(request, listener)
 
             cont.invokeOnCancellation {
-                heartbeatJob.cancel()
+                initialHeartbeatJob.cancel()
+                repeatHeartbeatJob?.cancel()
                 eventSource?.cancel()
             }
         }

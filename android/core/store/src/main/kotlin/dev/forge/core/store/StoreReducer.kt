@@ -24,9 +24,9 @@ fun reduce(state: AppState, event: AppEvent): AppState = when (event) {
     is AppEvent.MessageUpdated -> {
         val sessionMessages = state.messages[event.message.sessionID] ?: emptyList()
         val updated = sessionMessages.upsertById(event.message) { it.id }
-        // Confirm matching optimistic message
+        // Remove optimistic entry when the server echoes back the user message
         val optimistic = state.optimisticMessages[event.message.sessionID] ?: emptyList()
-        val confirmedOptimistic = optimistic.filter { it.id != event.message.id }
+        val confirmedOptimistic = if (event.message.role == "user") emptyList() else optimistic
         state.copy(
             messages = state.messages + (event.message.sessionID to updated),
             optimisticMessages = if (confirmedOptimistic.size != optimistic.size)
@@ -108,13 +108,16 @@ fun reduce(state: AppState, event: AppEvent): AppState = when (event) {
 /** Binary-search upsert into a list sorted by String key (lexicographic). */
 private fun <T> List<T>.upsertById(item: T, key: (T) -> String): List<T> {
     val k = key(item)
-    val idx = indexOfFirst { key(it) == k }
-    return if (idx >= 0) {
-        // Replace existing
-        toMutableList().also { it[idx] = item }
-    } else {
-        // Insert in sorted position
-        val insertAt = indexOfFirst { key(it) > k }.let { if (it < 0) size else it }
-        toMutableList().also { it.add(insertAt, item) }
+    var lo = 0; var hi = size - 1
+    while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        val midKey = key(this[mid])
+        when {
+            midKey == k -> return toMutableList().also { it[mid] = item }
+            midKey < k -> lo = mid + 1
+            else -> hi = mid - 1
+        }
     }
+    // lo is the sorted insertion point
+    return toMutableList().also { it.add(lo, item) }
 }

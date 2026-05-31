@@ -9,6 +9,7 @@ import dev.forge.core.network.SseManager
 import dev.forge.core.sdk.ForgeClient
 import dev.forge.core.store.AppStore
 import dev.forge.core.store.OptimisticMessage
+import dev.forge.core.store.ConnectionState
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -52,15 +53,19 @@ class ChatViewModel @Inject constructor(
 
     init {
         loadMessages()
-        // Subscribe to per-directory SSE once the session's directory is resolved
+        // Subscribe to per-directory SSE exactly once, when the session's directory is known
         viewModelScope.launch {
-            uiState.collect { state ->
-                val dir = state.session?.directory
-                if (dir != null) {
-                    sseManager.subscribeDirectory(dir)
-                    return@collect  // only need to do this once
-                }
-            }
+            val dir = uiState.first { it.session?.directory != null }.session?.directory
+            if (dir != null) sseManager.subscribeDirectory(dir)
+        }
+        // Reload messages after a reconnection (GlobalDisposed wipes state)
+        viewModelScope.launch {
+            store.state
+                .map { it.connectionState }
+                .distinctUntilChanged()
+                .drop(1) // skip initial state; init already called loadMessages()
+                .filter { it is ConnectionState.Connected }
+                .collect { loadMessages() }
         }
     }
 

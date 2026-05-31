@@ -24,7 +24,7 @@ import dev.forge.core.store.OptimisticMessage
 import dev.forge.feature.chat.ChatViewModel
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
     sessionId: String,
@@ -35,11 +35,18 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // Auto-scroll to bottom when new messages arrive
+    // Only auto-scroll if the user is already near the bottom
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf true
+            last.index >= info.totalItemsCount - 2
+        }
+    }
     val totalItems = uiState.messages.size + uiState.optimisticMessages.size
     LaunchedEffect(totalItems) {
-        if (totalItems > 0) {
-            scope.launch { listState.animateScrollToItem(totalItems - 1) }
+        if (totalItems > 0 && atBottom) {
+            listState.animateScrollToItem(totalItems - 1)
         }
     }
 
@@ -106,7 +113,7 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(bottom = 8.dp),
+                .imeNestedScroll(),
         ) {
             items(uiState.messages, key = { it.id }) { message ->
                 // SSE live parts supersede REST-loaded parts when present

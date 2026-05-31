@@ -11,7 +11,7 @@ import (
 type skillResolver struct{ directory string }
 
 func (s skillResolver) Load(name string) (string, error) {
-	if content, ok := resource.SkillContent(s.directory, name); ok {
+	if content, ok := resource.SkillContent(s.directory, loadConfig(s.directory), name); ok {
 		return content, nil
 	}
 	return "", fmt.Errorf("skill %q not found", name)

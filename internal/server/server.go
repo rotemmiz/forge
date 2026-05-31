@@ -88,6 +88,7 @@ func New(opts Options) (http.Handler, error) {
 	reg(http.MethodGet, "/openapi.json", docHandler())
 	reg(http.MethodGet, "/config", configHandler())
 	registerFindRoutes(reg)
+	registerResourceRoutes(reg, opts.Catalog)
 
 	if opts.Sessions != nil {
 		registerSessionRoutes(reg, opts.Sessions)

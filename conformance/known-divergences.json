@@ -17,9 +17,21 @@
   },
   {
     "scenario": "provider-list",
-    "phase": "A",
-    "reason": "GET /provider returns the models.dev catalog (plan 04); not implemented in plan-01 M1/M2",
-    "track": "TODO: implement with provider/models loader (plan 04)"
+    "phase": "B",
+    "reason": "GET /provider is implemented (models.dev catalog + connected/default). It is NOT byte-parity with opencode: `all` matches, but `connected` depends on which provider credentials are in the daemon's env/auth.json (opencode also detects via per-provider SDK init), and Forge's Model objects use the models.dev shape rather than opencode's nested capabilities shape. Membership/ids are comparable; not gated by a dual-run scenario.",
+    "track": "done (plan 04 M7/M8); refine model shape + oauth detection later"
+  },
+  {
+    "scenario": "agent-list",
+    "phase": "B",
+    "reason": "GET /agent is implemented (built-ins + .opencode/agent(s) + config). It is NOT byte-parity with opencode: built-in agents carry a simple allow-all permission ruleset rather than opencode's env-specific patterns (tool-output/temp dirs) and full system prompts, Forge omits flag-gated built-ins (scout), and the config `agent` overlay applies only description/mode/hidden/model (not prompt/temperature/options/permission). The self-diff gate is opencode-vs-opencode so this does not affect CI.",
+    "track": "done (plan 04 M3/M8); richer built-in permissions later"
+  },
+  {
+    "scenario": "command-list",
+    "phase": "B",
+    "reason": "GET /command is implemented (.opencode/command(s) + config). Forge returns only file/config commands (source=command); opencode also surfaces built-in, MCP, and skill-derived commands. The opencode order is also non-deterministic so it was never a parity scenario.",
+    "track": "done for .opencode commands (plan 04 M4/M8); skill/MCP commands are plan 04 M6 / plan 03"
   },
   {
     "scenario": "find-file",

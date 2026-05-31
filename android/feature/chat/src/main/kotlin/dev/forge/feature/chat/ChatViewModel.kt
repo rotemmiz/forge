@@ -81,8 +81,21 @@ class ChatViewModel @Inject constructor(
 
     private val directory: String? get() = uiState.value.session?.directory
 
+    /** Slash commands available for this session's directory (loaded once). */
+    private val _commands = MutableStateFlow<List<CommandInfo>>(emptyList())
+    val commands: StateFlow<List<CommandInfo>> = _commands.asStateFlow()
+
     init {
         loadMessages()
+        // Load slash commands once the directory is known.
+        viewModelScope.launch {
+            val dir = uiState.first { it.session?.directory != null }.session?.directory
+            try {
+                _commands.value = client.listCommands(dir)
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "listCommands failed", e)
+            }
+        }
         // Subscribe to per-directory SSE exactly once, when the session's directory is known
         viewModelScope.launch {
             val dir = uiState.first { it.session?.directory != null }.session?.directory
@@ -151,6 +164,26 @@ class ChatViewModel @Inject constructor(
                 client.sendPrompt(sessionId, text, directory, attachments)
             } catch (e: Exception) {
                 optimisticId?.let { store.removeOptimistic(sessionId, it) }
+            }
+        }
+    }
+
+    /** @-mention picker — fuzzy file search in the session directory. */
+    suspend fun searchFiles(query: String): List<String> =
+        try {
+            client.findFiles(query, directory)
+        } catch (e: Exception) {
+            android.util.Log.w("ChatVM", "findFiles failed", e)
+            emptyList()
+        }
+
+    /** Slash palette — run a command by name with the trailing arguments. */
+    fun runCommand(name: String, arguments: String) {
+        viewModelScope.launch {
+            try {
+                client.runCommand(sessionId, name, arguments, directory)
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "runCommand failed", e)
             }
         }
     }

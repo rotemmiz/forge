@@ -7,8 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -23,10 +26,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.forge.core.model.CommandInfo
 import dev.forge.core.model.FilePartInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,25 +50,49 @@ private const val MAX_FILE_BYTES = 10 * 1024 * 1024  // 10 MB OOM guard
 /** Bundles a file part with the human-readable name shown in the chip. */
 private data class PendingAttachment(val part: FilePartInput, val name: String)
 
+// Trailing @-mention token at the caret end: "see @src/ht" → "src/ht".
+private val MentionRegex = Regex("""(?:^|\s)@(\S*)$""")
+
 /**
- * Sticky bottom prompt input with file attachment support (C5).
- * Design: surfaceContainer bg, 2dp primary left border, 48dp min height,
- * paper-plane send button in primary color. (design/android/README.md §5)
- *
- * File I/O is dispatched to Dispatchers.IO via rememberCoroutineScope.
- * Files > 10 MB are silently skipped (logged at WARN) to prevent OOM.
+ * Sticky bottom prompt input (C5) with `/` command palette and `@` file-mention
+ * autocomplete (design §5 + Interactions). Both surface as inline suggestion
+ * panels above the field so the keyboard stays up while filtering.
  */
 @Composable
 fun PromptInput(
     onSend: (String, List<FilePartInput>) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    commands: List<CommandInfo> = emptyList(),
+    onSearchFiles: suspend (String) -> List<String> = { emptyList() },
+    onRunCommand: (name: String, arguments: String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var text by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
+
+    // `/cmd` is active only while the text is a single leading slash token.
+    val slashQuery: String? = remember(text) {
+        if (text.startsWith("/") && !text.contains(' ') && !text.contains('\n')) text.drop(1) else null
+    }
+    val mentionMatch = remember(text) { MentionRegex.find(text) }
+    val mentionQuery: String? = mentionMatch?.groupValues?.get(1)
+
+    val filteredCommands = remember(commands, slashQuery) {
+        if (slashQuery == null) emptyList()
+        else commands.filter { it.name.contains(slashQuery, ignoreCase = true) }.take(8)
+    }
+
+    var fileResults by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(mentionQuery) {
+        fileResults = if (mentionQuery != null && mentionQuery.length >= 1) {
+            onSearchFiles(mentionQuery)
+        } else {
+            emptyList()
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -92,6 +128,24 @@ fun PromptInput(
             .imePadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        // ── Autocomplete panels (above the field) ──
+        when {
+            filteredCommands.isNotEmpty() -> CommandPanel(
+                commands = filteredCommands,
+                onPick = { cmd ->
+                    onRunCommand(cmd.name, "")
+                    text = ""
+                },
+            )
+            mentionQuery != null && fileResults.isNotEmpty() -> MentionPanel(
+                files = fileResults,
+                onPick = { path ->
+                    val start = mentionMatch!!.range.first + (mentionMatch.value.length - mentionMatch.value.trimStart().length)
+                    text = text.substring(0, start) + "@" + path + " "
+                },
+            )
+        }
+
         // Attachment chip strip — shown only when there are attachments
         if (pendingAttachments.isNotEmpty()) {
             LazyRow(
@@ -140,6 +194,7 @@ fun PromptInput(
                             fontSize = 13.5.sp,
                         ),
                         cursorBrush = SolidColor(Primary),
+                        visualTransformation = ComposerTokenTransformation,
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 10.dp, vertical = 12.dp),
@@ -202,6 +257,122 @@ fun PromptInput(
             }
         }
     }
+}
+
+/** Slash-command suggestions list, anchored above the field. */
+@Composable
+private fun CommandPanel(commands: List<CommandInfo>, onPick: (CommandInfo) -> Unit) {
+    SuggestionPanel {
+        LazyColumn {
+            itemsIndexed(commands, key = { _, c -> c.name }) { index, cmd ->
+                if (index > 0) HorizontalDivider(color = Hairline)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(cmd) }
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "/${cmd.name}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Secondary,
+                    )
+                    cmd.description?.let {
+                        Text(
+                            text = it,
+                            fontSize = 13.sp,
+                            color = OnSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    val src = cmd.source
+                    if (src == "mcp" || src == "skill") {
+                        SourcePill(src)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** @-mention file suggestions list, anchored above the field. */
+@Composable
+private fun MentionPanel(files: List<String>, onPick: (String) -> Unit) {
+    SuggestionPanel {
+        LazyColumn {
+            items(files, key = { it }) { path ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(path) }
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        text = path,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        color = LinkCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionPanel(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 240.dp)
+            .padding(bottom = 6.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(SurfaceContainerHigh)
+            .border(1.dp, Hairline, RoundedCornerShape(8.dp)),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SourcePill(source: String) {
+    Text(
+        text = source,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        color = LinkCyan,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(LinkCyan.copy(alpha = 0.12f))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+/** Colors a leading `/command` amber and any `@mention` cyan (length-preserving). */
+private val ComposerTokenTransformation = VisualTransformation { original ->
+    val str = original.text
+    val annotated = buildAnnotatedString {
+        append(str)
+        if (str.startsWith("/")) {
+            val end = str.indexOf(' ').let { if (it == -1) str.length else it }
+            addStyle(SpanStyle(color = Secondary), 0, end)
+        }
+        Regex("""@\S+""").findAll(str).forEach { m ->
+            addStyle(SpanStyle(color = LinkCyan), m.range.first, m.range.last + 1)
+        }
+    }
+    TransformedText(annotated, OffsetMapping.Identity)
 }
 
 /** Chip showing the attached file name with an X remove button. */

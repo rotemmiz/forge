@@ -147,6 +147,49 @@ func TestPathReplacementIsDeterministicAcrossSymlinkForms(t *testing.T) {
 	}
 }
 
+func TestPathReplacementCoversRelativeForm(t *testing.T) {
+	// opencode's session "path" is the cwd with the leading "/" stripped. The
+	// normalizer registers only the absolute dir, so the relative form must be
+	// derived automatically — otherwise the random temp suffix diffs run-to-run.
+	n := New("/tmp/forge-conf-abc")
+	m := normJSON(t, n, `{"directory":"/tmp/forge-conf-abc","path":"tmp/forge-conf-abc"}`)
+	if m["directory"] != "<path>" {
+		t.Errorf("directory: want <path>, got %v", m["directory"])
+	}
+	if m["path"] != "<path>" {
+		t.Errorf("relative path: want <path>, got %v", m["path"])
+	}
+}
+
+func TestConfDirScrubbedWhenNotRegistered(t *testing.T) {
+	// GET /session returns a global list spanning sibling scenarios' temp dirs,
+	// which this client never registered. They must still be scrubbed so two runs
+	// don't diff on the random forge-conf suffix.
+	n := New("/tmp/forge-conf-100")
+	m := normJSON(t, n, `{"directory":"/private/tmp/claude-501/forge-conf-999","path":"private/tmp/claude-501/forge-conf-999"}`)
+	if m["directory"] != "<path>" || m["path"] != "<path>" {
+		t.Errorf("unregistered conf dir not scrubbed: %v", m)
+	}
+}
+
+func TestConfHomeScrubbedInPermissionPattern(t *testing.T) {
+	// opencode bakes the per-run temp HOME into agent permission patterns; the
+	// volatile mktemp prefix must collapse while the stable data-dir tail stays.
+	n := New("/tmp/forge-conf-1")
+	for _, home := range []string{
+		"/tmp/tmp.24TAFncWtJ",
+		"tmp/tmp.24TAFncWtJ", // leading-slash-stripped relative form
+		"/var/folders/q5/abc123/T/tmp.iLVyqTr56n",
+		"/private/var/folders/q5/abc123/T/tmp.iLVyqTr56n",
+		"var/folders/q5/abc123/T/tmp.iLVyqTr56n",
+	} {
+		got := n.replacePaths(home + "/.local/share/opencode/tool-output/*")
+		if got != "<path>/.local/share/opencode/tool-output/*" {
+			t.Errorf("home %q not scrubbed: got %q", home, got)
+		}
+	}
+}
+
 func TestNormalizeSSE(t *testing.T) {
 	n := New()
 	body := "event: message\n" +

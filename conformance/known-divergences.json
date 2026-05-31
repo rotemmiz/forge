@@ -44,5 +44,11 @@
     "phase": "B",
     "reason": "The `task` subagent tool is wired (child session linked to parent, nested agent loop, last-text result wrapped in opencode's <task>/<task_result> envelope). One parity gap: opencode also disables `todowrite` on the child unless the agent's permission grants it (tool/task.ts:194); Forge only disables `task` (nil subagent → bounded recursion). Honoring per-message tool disables needs PromptInput.Tools wired into the registry filter (not yet consumed), so it is deferred. Child session titles also use the generic timestamp rather than opencode's '<desc> (@agent subagent)'.",
     "track": "TODO: wire per-message Tools gating + descriptive child titles (plan 02 follow-up)"
+  },
+  {
+    "scenario": "instructions-remote",
+    "phase": "C",
+    "reason": "System instructions from AGENTS.md/CLAUDE.md/CONTEXT.md (project upward-walk + global ~/.config/opencode + ~/.claude) and local config `instructions[]` are resolved into the system prompt. http(s) URLs in `instructions[]` are NOT fetched (opencode fetches them; instruction.ts:154-159) — remote instruction fetch is deferred. The `disable_claude_code_prompt` flag is also not honored yet (CLAUDE.md is always a candidate).",
+    "track": "TODO: fetch remote instruction URLs + honor disable_claude_code_prompt (plan 04)"
   }
 ]

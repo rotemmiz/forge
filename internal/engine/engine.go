@@ -47,7 +47,10 @@ type Config struct {
 	Directory string
 	// Rulesets are the merged agent/config permission rules for tool gating.
 	Rulesets []permission.Ruleset
-	Flags    registry.Flags
+	// SystemInstructions are the resolved AGENTS.md/CLAUDE.md/config rules blocks
+	// appended to the system prompt (plan 04 instructions).
+	SystemInstructions []string
+	Flags              registry.Flags
 }
 
 // Engine runs prompts for one instance (working directory).

@@ -22,6 +22,11 @@ class SseEventParser @Inject constructor() {
                 AppEvent.SessionUpdated(ForgeJson.decodeFromJsonElement(Session.serializer(), p))
             "session.removed" ->
                 AppEvent.SessionRemoved(p["sessionID"]?.jsonPrimitive?.content ?: "")
+            "session.status" ->
+                AppEvent.SessionStatus(
+                    sessionId = p["sessionID"]?.jsonPrimitive?.content ?: "",
+                    status = p["status"]?.jsonObject?.get("type")?.jsonPrimitive?.content ?: "idle",
+                )
 
             "message.updated" ->
                 AppEvent.MessageUpdated(parseMessage(p))
@@ -81,6 +86,7 @@ class SseEventParser @Inject constructor() {
             "reasoning" -> ForgeJson.decodeFromJsonElement(ReasoningPart.serializer(), json)
             "file" -> ForgeJson.decodeFromJsonElement(FilePart.serializer(), json)
             "tool" -> ForgeJson.decodeFromJsonElement(ToolPart.serializer(), json)
+            "patch" -> ForgeJson.decodeFromJsonElement(PatchPart.serializer(), json)
             "step-start" -> StepStartPart(id, sessionID, messageID)
             "step-finish" -> StepFinishPart(id, sessionID, messageID)
             else -> UnknownPart(id, sessionID, messageID, type)

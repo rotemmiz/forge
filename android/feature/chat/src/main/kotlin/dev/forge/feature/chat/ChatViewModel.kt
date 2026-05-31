@@ -21,6 +21,7 @@ data class ChatUiState(
     val optimisticMessages: List<OptimisticMessage> = emptyList(),
     val pendingPermissions: List<PermissionRequest> = emptyList(),
     val pendingQuestions: List<QuestionRequest> = emptyList(),
+    val sessionStatus: String = "idle",
     val isLoading: Boolean = false,
     val isSending: Boolean = false,
 )
@@ -45,6 +46,7 @@ class ChatViewModel @Inject constructor(
                 optimisticMessages = appState.optimisticMessages[sessionId] ?: emptyList(),
                 pendingPermissions = appState.permissions[sessionId] ?: emptyList(),
                 pendingQuestions = appState.questions[sessionId] ?: emptyList(),
+                sessionStatus = appState.sessionStatus[sessionId] ?: "idle",
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())

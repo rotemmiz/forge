@@ -20,6 +20,9 @@ fun reduce(state: AppState, event: AppEvent): AppState = when (event) {
     is AppEvent.SessionRemoved -> state.copy(
         sessions = state.sessions.filter { it.id != event.sessionId }
     )
+    is AppEvent.SessionStatus -> state.copy(
+        sessionStatus = state.sessionStatus + (event.sessionId to event.status)
+    )
 
     is AppEvent.MessageUpdated -> {
         val sessionMessages = state.messages[event.message.sessionID] ?: emptyList()

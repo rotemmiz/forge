@@ -80,6 +80,7 @@ class ForgeClient @Inject constructor(
             "reasoning" -> ForgeJson.decodeFromJsonElement(ReasoningPart.serializer(), obj)
             "file" -> ForgeJson.decodeFromJsonElement(FilePart.serializer(), obj)
             "tool" -> ForgeJson.decodeFromJsonElement(ToolPart.serializer(), obj)
+            "patch" -> ForgeJson.decodeFromJsonElement(PatchPart.serializer(), obj)
             "step-start" -> StepStartPart(id, sessionID, messageID)
             "step-finish" -> StepFinishPart(id, sessionID, messageID)
             else -> UnknownPart(id, sessionID, messageID, type)

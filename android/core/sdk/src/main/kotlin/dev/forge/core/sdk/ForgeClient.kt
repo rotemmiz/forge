@@ -96,10 +96,12 @@ class ForgeClient @Inject constructor(
         path = "/session/$sessionId/message",
         body = buildJsonObject {
             put("parts", buildJsonArray {
-                add(buildJsonObject {
-                    put("type", "text")
-                    put("text", text)
-                })
+                if (text.isNotBlank()) {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", text)
+                    })
+                }
                 attachments.forEach { att ->
                     add(buildJsonObject {
                         put("type", "file")

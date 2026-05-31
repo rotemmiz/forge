@@ -1,6 +1,7 @@
 package dev.forge.feature.chat.ui
 
 import android.util.Base64
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -8,7 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -27,34 +28,62 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.forge.core.model.FilePartInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private const val TAG = "PromptInput"
+private const val MAX_FILE_BYTES = 10 * 1024 * 1024  // 10 MB OOM guard
+
+/** Bundles a file part with the human-readable name shown in the chip. */
+private data class PendingAttachment(val part: FilePartInput, val name: String)
 
 /**
- * Sticky bottom prompt input.
+ * Sticky bottom prompt input with file attachment support (C5).
  * Design: surfaceContainer bg, 2dp primary left border, 48dp min height,
  * paper-plane send button in primary color. (design/android/README.md §5)
+ *
+ * File I/O is dispatched to Dispatchers.IO via rememberCoroutineScope.
+ * Files > 10 MB are silently skipped (logged at WARN) to prevent OOM.
  */
 @Composable
 fun PromptInput(
-    onSend: (text: String, attachments: List<FilePartInput>) -> Unit,
+    onSend: (String, List<FilePartInput>) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    var text by remember { mutableStateOf("") }
-    var attachments by remember { mutableStateOf<List<FilePartInput>>(emptyList()) }
-    var attachmentNames by remember { mutableStateOf<List<String>>(emptyList()) }
-
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var text by remember { mutableStateOf("") }
+    var pendingAttachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: return@rememberLauncherForActivityResult
-        val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        val dataUrl = "data:$mime;base64,$b64"
-        val name = uri.lastPathSegment ?: "file"
-        attachments = attachments + FilePartInput(mime = mime, url = dataUrl)
-        attachmentNames = attachmentNames + name
+        scope.launch(Dispatchers.IO) {
+            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return@launch
+            if (bytes.size > MAX_FILE_BYTES) {
+                Log.w(TAG, "Skipping attachment: ${bytes.size} bytes exceeds 10 MB limit")
+                return@launch
+            }
+            val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val dataUrl = "data:$mime;base64,$b64"
+            val name = context.contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: uri.lastPathSegment ?: "file"
+
+            withContext(Dispatchers.Main) {
+                pendingAttachments = pendingAttachments + PendingAttachment(
+                    FilePartInput(mime = mime, url = dataUrl), name,
+                )
+            }
+        }
     }
 
     Column(
@@ -63,19 +92,22 @@ fun PromptInput(
             .imePadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        if (attachments.isNotEmpty()) {
+        // Attachment chip strip — shown only when there are attachments
+        if (pendingAttachments.isNotEmpty()) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
+                contentPadding = PaddingValues(bottom = 6.dp),
             ) {
-                items(attachments.indices.toList()) { idx ->
+                itemsIndexed(
+                    pendingAttachments,
+                    key = { _, att -> att.part.url },
+                ) { idx, att ->
                     AttachmentChip(
-                        name = attachmentNames[idx],
+                        name = att.name,
                         onRemove = {
-                            attachments = attachments.toMutableList().also { it.removeAt(idx) }
-                            attachmentNames = attachmentNames.toMutableList().also { it.removeAt(idx) }
+                            pendingAttachments = pendingAttachments
+                                .toMutableList()
+                                .also { it.removeAt(idx) }
                         },
                     )
                 }
@@ -126,16 +158,15 @@ fun PromptInput(
                 }
             }
 
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
 
-            // Paperclip button — 48dp touch target
+            // Paperclip button — always shown, 48dp touch target
             IconButton(
                 onClick = { filePicker.launch("*/*") },
                 enabled = enabled,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(SurfaceContainer),
+                    .clip(RoundedCornerShape(6.dp)),
             ) {
                 Icon(
                     Icons.Default.AttachFile,
@@ -145,19 +176,16 @@ fun PromptInput(
                 )
             }
 
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(2.dp))
 
             // Send button — 48dp blue square (M3 minimum touch target)
-            val canSend = enabled && (text.isNotBlank() || attachments.isNotEmpty())
+            val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
             IconButton(
                 onClick = {
                     val trimmed = text.trim()
-                    if (trimmed.isNotEmpty() || attachments.isNotEmpty()) {
-                        onSend(trimmed, attachments)
-                        text = ""
-                        attachments = emptyList()
-                        attachmentNames = emptyList()
-                    }
+                    onSend(trimmed, pendingAttachments.map { it.part })
+                    text = ""
+                    pendingAttachments = emptyList()
                 },
                 enabled = canSend,
                 modifier = Modifier
@@ -176,34 +204,38 @@ fun PromptInput(
     }
 }
 
+/** Chip showing the attached file name with an X remove button. */
 @Composable
-private fun AttachmentChip(name: String, onRemove: () -> Unit) {
+private fun AttachmentChip(
+    name: String,
+    onRemove: () -> Unit,
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = SurfaceContainer,
         border = BorderStroke(1.dp, Hairline),
+        tonalElevation = 0.dp,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 4.dp, bottom = 4.dp),
         ) {
             Text(
                 text = name,
+                style = MaterialTheme.typography.labelSmall,
                 color = OnSurface,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
                 maxLines = 1,
             )
-            // 32dp button keeps overall chip height reasonable while meeting minimum touch target
+            // 48dp touch target for accessibility compliance
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     Icons.Default.Close,
-                    contentDescription = "Remove attachment",
-                    tint = OnSurfaceVariant,
+                    contentDescription = "Remove $name",
                     modifier = Modifier.size(14.dp),
+                    tint = OnSurfaceFaint,
                 )
             }
         }

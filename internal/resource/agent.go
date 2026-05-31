@@ -139,6 +139,10 @@ type agentFrontmatter struct {
 	Steps       *int            `yaml:"steps"`
 	MaxSteps    *int            `yaml:"maxSteps"`
 	Options     map[string]any  `yaml:"options"`
+	// Permission is the modern replacement for tools: a single action string
+	// (shorthand for {"*": action}) or a {key: action | {pattern: action}} map
+	// (config/permission.ts). Decoded as `any` because of the union shape.
+	Permission any `yaml:"permission"`
 }
 
 // loadAgentDir parses every {agent,agents}/**/*.md under configDir into a
@@ -185,8 +189,65 @@ func parseAgent(data []byte) *Agent {
 	if m := parseModelRef(fm.Model); m != nil {
 		a.Model = m
 	}
-	a.Permission = toolsToPermission(fm.Tools)
+	// tools (deprecated) is rewritten to permission rules first; an explicit
+	// permission block then layers on top (last match wins in Evaluate).
+	a.Permission = append(toolsToPermission(fm.Tools), parsePermissionConfig(fm.Permission)...)
 	return a
+}
+
+// parsePermissionConfig translates the `permission` frontmatter (config/
+// permission.ts Info) into rules. It accepts a bare action string (→ "*"),
+// a {key: action} map, or a {key: {pattern: action}} map. Keys and patterns are
+// emitted in sorted order for deterministic output.
+func parsePermissionConfig(v any) permission.Ruleset {
+	switch t := v.(type) {
+	case nil:
+		return nil
+	case string:
+		if a := toAction(t); a != "" {
+			return permission.Ruleset{{Permission: "*", Pattern: "*", Action: a}}
+		}
+	case map[string]any:
+		var rs permission.Ruleset
+		for _, key := range sortedKeys(t) {
+			switch val := t[key].(type) {
+			case string:
+				if a := toAction(val); a != "" {
+					rs = append(rs, permission.Rule{Permission: key, Pattern: "*", Action: a})
+				}
+			case map[string]any:
+				for _, pat := range sortedKeys(val) {
+					if a := toAction(val[pat]); a != "" {
+						rs = append(rs, permission.Rule{Permission: key, Pattern: pat, Action: a})
+					}
+				}
+			}
+		}
+		return rs
+	}
+	return nil
+}
+
+// toAction validates an action value; returns "" for anything not in the enum.
+func toAction(v any) permission.Action {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	switch permission.Action(s) {
+	case permission.ActionAsk, permission.ActionAllow, permission.ActionDeny:
+		return permission.Action(s)
+	}
+	return ""
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // parseModelRef splits a "provider/model" reference; returns nil when empty.

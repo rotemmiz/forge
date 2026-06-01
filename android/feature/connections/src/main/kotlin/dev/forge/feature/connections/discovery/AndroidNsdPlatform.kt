@@ -25,43 +25,46 @@ class AndroidNsdPlatform(
     private val main = Handler(Looper.getMainLooper())
 
     private var multicastLock: WifiManager.MulticastLock? = null
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private val discoveryListeners = mutableListOf<NsdManager.DiscoveryListener>()
 
     /** Full [NsdServiceInfo] for each found service, keyed by name — needed to resolve it. */
     private val found = mutableMapOf<String, NsdServiceInfo>()
 
-    override fun start(serviceType: String, callbacks: NsdPlatform.Callbacks) {
+    override fun start(serviceTypes: List<String>, callbacks: NsdPlatform.Callbacks) {
         multicastLock = wifi.createMulticastLock(MULTICAST_LOCK_TAG).apply {
             setReferenceCounted(true)
             runCatching { acquire() }
         }
 
-        val listener = object : NsdManager.DiscoveryListener {
-            override fun onStartDiscoveryFailed(serviceType: String?, errorCode: Int) {
-                runCatching { nsd.stopServiceDiscovery(this) }
-            }
+        // One DiscoveryListener per service type — NsdManager binds a listener to a single browse.
+        for (serviceType in serviceTypes) {
+            val listener = object : NsdManager.DiscoveryListener {
+                override fun onStartDiscoveryFailed(serviceType: String?, errorCode: Int) {
+                    runCatching { nsd.stopServiceDiscovery(this) }
+                }
 
-            override fun onStopDiscoveryFailed(serviceType: String?, errorCode: Int) {}
-            override fun onDiscoveryStarted(serviceType: String?) {}
-            override fun onDiscoveryStopped(serviceType: String?) {}
+                override fun onStopDiscoveryFailed(serviceType: String?, errorCode: Int) {}
+                override fun onDiscoveryStarted(serviceType: String?) {}
+                override fun onDiscoveryStopped(serviceType: String?) {}
 
-            override fun onServiceFound(info: NsdServiceInfo) {
-                found[info.serviceName] = info
-                main.post { callbacks.onServiceFound(RawService(info.serviceName, info.serviceType)) }
-            }
+                override fun onServiceFound(info: NsdServiceInfo) {
+                    found[info.serviceName] = info
+                    main.post { callbacks.onServiceFound(RawService(info.serviceName, info.serviceType)) }
+                }
 
-            override fun onServiceLost(info: NsdServiceInfo) {
-                found.remove(info.serviceName)
-                main.post { callbacks.onServiceLost(RawService(info.serviceName, info.serviceType)) }
+                override fun onServiceLost(info: NsdServiceInfo) {
+                    found.remove(info.serviceName)
+                    main.post { callbacks.onServiceLost(RawService(info.serviceName, info.serviceType)) }
+                }
             }
+            discoveryListeners += listener
+            runCatching { nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener) }
         }
-        discoveryListener = listener
-        runCatching { nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener) }
     }
 
     override fun stop() {
-        discoveryListener?.let { listener -> runCatching { nsd.stopServiceDiscovery(listener) } }
-        discoveryListener = null
+        discoveryListeners.forEach { listener -> runCatching { nsd.stopServiceDiscovery(listener) } }
+        discoveryListeners.clear()
         found.clear()
         multicastLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
         multicastLock = null

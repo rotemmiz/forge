@@ -12,7 +12,7 @@ class FakeNsdPlatform : NsdPlatform {
         private set
     var stopCount = 0
         private set
-    var lastServiceType: String? = null
+    var lastServiceTypes: List<String> = emptyList()
         private set
 
     private var callbacks: NsdPlatform.Callbacks? = null
@@ -22,10 +22,10 @@ class FakeNsdPlatform : NsdPlatform {
 
     val pendingResolveCount: Int get() = resolveQueue.size
 
-    override fun start(serviceType: String, callbacks: NsdPlatform.Callbacks) {
+    override fun start(serviceTypes: List<String>, callbacks: NsdPlatform.Callbacks) {
         started = true
         startCount++
-        lastServiceType = serviceType
+        lastServiceTypes = serviceTypes
         this.callbacks = callbacks
     }
 
@@ -42,11 +42,11 @@ class FakeNsdPlatform : NsdPlatform {
 
     // ─── Test drivers ──────────────────────────────────────────────────────────
 
-    fun emitFound(name: String, type: String = DiscoveryManager.DEFAULT_SERVICE_TYPE) {
+    fun emitFound(name: String, type: String = DiscoveryManager.SERVICE_TYPE_OPENCODE) {
         callbacks?.onServiceFound(RawService(name, type))
     }
 
-    fun emitLost(name: String, type: String = DiscoveryManager.DEFAULT_SERVICE_TYPE) {
+    fun emitLost(name: String, type: String = DiscoveryManager.SERVICE_TYPE_OPENCODE) {
         callbacks?.onServiceLost(RawService(name, type))
     }
 

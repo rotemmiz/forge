@@ -19,7 +19,7 @@ class DiscoveryManagerTest {
         manager.start()
         assertTrue(platform.started)
         assertEquals(1, platform.startCount)
-        assertEquals(DiscoveryManager.DEFAULT_SERVICE_TYPE, platform.lastServiceType)
+        assertEquals(DiscoveryManager.DEFAULT_SERVICE_TYPES, platform.lastServiceTypes)
         assertTrue(manager.scanning.value)
 
         manager.stop()
@@ -70,6 +70,33 @@ class DiscoveryManagerTest {
 
         platform.completeNextResolve(server("beta", "192.168.1.11"))
         assertEquals(listOf("alpha", "beta"), manager.servers.value.map { it.serviceName })
+    }
+
+    @Test
+    fun `http services are resolved only when named like opencode`() {
+        val platform = FakeNsdPlatform()
+        val manager = DiscoveryManager(platform)
+        manager.start()
+
+        // A random HTTP service on the LAN — ignored.
+        platform.emitFound("Brother Printer", type = DiscoveryManager.SERVICE_TYPE_HTTP)
+        assertEquals(0, platform.pendingResolveCount)
+
+        // opencode's native --mdns publishes `opencode-<port>` over _http._tcp — accepted.
+        platform.emitFound("opencode-4096", type = DiscoveryManager.SERVICE_TYPE_HTTP)
+        assertEquals(1, platform.pendingResolveCount)
+        platform.completeNextResolve(server("opencode-4096", "192.168.1.10"))
+        assertEquals(listOf("opencode-4096"), manager.servers.value.map { it.serviceName })
+    }
+
+    @Test
+    fun `opencode-typed services are resolved regardless of name`() {
+        val platform = FakeNsdPlatform()
+        val manager = DiscoveryManager(platform)
+        manager.start()
+
+        platform.emitFound("my-daemon", type = DiscoveryManager.SERVICE_TYPE_OPENCODE)
+        assertEquals(1, platform.pendingResolveCount)
     }
 
     @Test

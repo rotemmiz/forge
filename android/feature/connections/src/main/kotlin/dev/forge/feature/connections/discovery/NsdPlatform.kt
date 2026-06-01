@@ -12,8 +12,8 @@ data class RawService(val name: String, val type: String)
  * [AndroidNsdPlatform]) so the manager's internal state needs no locking.
  */
 interface NsdPlatform {
-    /** Acquire the multicast lock and begin browsing for [serviceType]. */
-    fun start(serviceType: String, callbacks: Callbacks)
+    /** Acquire the multicast lock and begin browsing each of [serviceTypes]. */
+    fun start(serviceTypes: List<String>, callbacks: Callbacks)
 
     /** Stop browsing and release the multicast lock. Safe to call when not started. */
     fun stop()

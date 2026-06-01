@@ -293,8 +293,12 @@ connections" that feed the existing `ServerConnectionManager.add(...)` flow abov
 stays as the fallback.
 
 **Service type.** Browse for **`_opencode._tcp.`** (preferred — distinguishes a real daemon from
-any other HTTP service); optionally also `_http._tcp.` as a secondary. TXT-record keys read when
-present:
+any other HTTP service) **and `_http._tcp.`**. opencode's native `--mdns` publishes a *generic
+HTTP* record (`type: "http"` → `_http._tcp`, name `opencode-<port>`, TXT `path=/`; see opencode
+`packages/opencode/src/server/mdns.ts`), so the `_http._tcp` browse is required to find a stock
+opencode. To avoid listing every printer/Chromecast on the LAN, `_http._tcp` results are accepted
+only when the service name starts with `opencode`; `_opencode._tcp` results are always accepted.
+TXT-record keys read when present:
 
 | TXT key     | Meaning                                           |
 |-------------|---------------------------------------------------|
@@ -342,11 +346,17 @@ discovered daemons (name, host:port, version), each tappable to prefill the form
 `auth=none` — add immediately. Spinner while browsing; empty-state explains "make sure you're on
 the same Wi-Fi."
 
-#### Bonjour on top of opencode (for testing — no opencode code changes)
+#### Advertising opencode for testing
 
-opencode does **not** advertise itself over mDNS today, so during development we run a tiny
-**sidecar publisher** next to the daemon. This needs **zero changes to opencode** and lets us
-build/test the Android discovery path immediately. Ship these as `scripts/mdns-advertise.*`.
+**Update (reconciled against reality):** opencode now ships a native `--mdns` flag
+(`opencode serve --mdns`, or `--hostname 0.0.0.0` since `--mdns` auto-defaults loopback → all
+interfaces). It publishes over **`_http._tcp`** as `opencode-<port>` with TXT `path=/` — which the
+app discovers directly (no auth TXT, so it adds without credentials). This supersedes the original
+"opencode does not advertise mDNS" assumption.
+
+The **sidecar publisher** below is still useful: it advertises the **preferred `_opencode._tcp`**
+type (which native opencode does *not*), and covers opencode builds without `--mdns`. It needs
+**zero changes to opencode**. Ship these as `scripts/mdns-advertise.*`.
 
 - **macOS (built-in Bonjour):**
   ```bash
@@ -366,8 +376,10 @@ build/test the Android discovery path immediately. Ship these as `scripts/mdns-a
 - **Cross-platform sidecar:** a ~15-line Python (`zeroconf`) or Go script registering the same
   record — for CI/containers where `dns-sd`/`avahi` aren't present.
 
-> **Later (native):** when the Forge daemon matures it should advertise `_opencode._tcp` itself at
-> startup (track in plan 01 / 13). The sidecar is a testing scaffold, not the long-term answer.
+> **Later (native):** opencode already self-advertises over `_http._tcp` (above). When the Forge
+> daemon matures it should advertise the dedicated **`_opencode._tcp`** type at startup (track in
+> plan 01 / 13) so clients can prefer it without the generic-HTTP name filter. The sidecar is a
+> testing scaffold, not the long-term answer.
 
 #### Testing notes & gotchas
 

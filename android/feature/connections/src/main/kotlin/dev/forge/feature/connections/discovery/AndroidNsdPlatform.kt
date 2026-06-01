@@ -48,13 +48,19 @@ class AndroidNsdPlatform(
                 override fun onDiscoveryStopped(serviceType: String?) {}
 
                 override fun onServiceFound(info: NsdServiceInfo) {
-                    found[info.serviceName] = info
-                    main.post { callbacks.onServiceFound(RawService(info.serviceName, info.serviceType)) }
+                    // Mutate `found` on the main thread only — NsdManager delivers this on a binder
+                    // thread, but resolve()/stop() touch the map on the main thread.
+                    main.post {
+                        found[info.serviceName] = info
+                        callbacks.onServiceFound(RawService(info.serviceName, info.serviceType))
+                    }
                 }
 
                 override fun onServiceLost(info: NsdServiceInfo) {
-                    found.remove(info.serviceName)
-                    main.post { callbacks.onServiceLost(RawService(info.serviceName, info.serviceType)) }
+                    main.post {
+                        found.remove(info.serviceName)
+                        callbacks.onServiceLost(RawService(info.serviceName, info.serviceType))
+                    }
                 }
             }
             discoveryListeners += listener

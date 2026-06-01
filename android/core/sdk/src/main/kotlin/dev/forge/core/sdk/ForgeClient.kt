@@ -259,6 +259,13 @@ class ForgeClient @Inject constructor(
 
     suspend fun deleteSession(sessionId: String) = delete("/session/$sessionId")
 
+    /** POST /session/{id}/abort — interrupt a running agent turn. Returns true if it was aborted. */
+    suspend fun abortSession(sessionId: String, directory: String? = null): Boolean = post(
+        path = "/session/$sessionId/abort",
+        body = JsonObject(emptyMap()),
+        directory = directory,
+    ) { json -> (json as? JsonPrimitive)?.booleanOrNull ?: false }
+
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
     private suspend fun <T> get(

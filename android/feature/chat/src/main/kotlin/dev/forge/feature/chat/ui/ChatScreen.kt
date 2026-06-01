@@ -183,6 +183,8 @@ fun ChatScreen(
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
                     enabled = pendingPermission == null && pendingQuestion == null,
+                    busy = uiState.sessionStatus == "busy",
+                    onStop = { viewModel.abort() },
                     commands = commands,
                     onSearchFiles = { query -> viewModel.searchFiles(query) },
                     onRunCommand = { name, args -> viewModel.runCommand(name, args) },

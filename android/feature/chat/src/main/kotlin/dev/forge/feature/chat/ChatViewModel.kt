@@ -219,6 +219,17 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** Stop a running agent turn (composer stop button, shown while the session is busy). */
+    fun abort() {
+        viewModelScope.launch {
+            try {
+                client.abortSession(sessionId, directory)
+            } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "abortSession failed", e)
+            }
+        }
+    }
+
     /** A8 — Permission reply */
     fun replyPermission(requestId: String, allow: Boolean) {
         viewModelScope.launch {

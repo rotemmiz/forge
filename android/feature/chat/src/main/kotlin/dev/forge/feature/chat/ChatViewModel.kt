@@ -209,6 +209,7 @@ class ChatViewModel @Inject constructor(
                     agent = _selectedAgent.value,
                 )
             } catch (e: Exception) {
+                android.util.Log.w("ChatVM", "sendPrompt failed", e)
                 optimisticId?.let { store.removeOptimistic(sessionId, it) }
             }
         }

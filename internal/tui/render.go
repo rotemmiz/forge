@@ -192,6 +192,7 @@ func (m Model) composerView() string {
 	bar := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
 		BorderForeground(accent).
+		Background(m.styles.P.Bg). // fill the composer row so it owns its bg (no terminal bleed)
 		PaddingLeft(1).
 		Width(m.barWidth()) // -1: the left border renders outside Width
 	view := bar.Render(m.input.View())

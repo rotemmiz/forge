@@ -212,8 +212,8 @@ func New(cfg Config) Model {
 func (m Model) applyTheme(name string, p theme.Palette) Model {
 	m.themeName = name
 	m.styles = theme.New(p)
-	txt := lipgloss.NewStyle().Foreground(p.Fg)
-	ph := lipgloss.NewStyle().Foreground(p.FgGhost)
+	txt := lipgloss.NewStyle().Foreground(p.Fg).Background(p.Bg)
+	ph := lipgloss.NewStyle().Foreground(p.FgGhost).Background(p.Bg)
 	m.input.FocusedStyle.Text, m.input.FocusedStyle.Placeholder = txt, ph
 	m.input.BlurredStyle.Text, m.input.BlurredStyle.Placeholder = txt, ph
 	return m
@@ -1090,16 +1090,20 @@ func (m Model) View() string {
 // viewSplash renders the wordmark, the composer, and the connection status.
 func (m Model) viewSplash() string {
 	s := m.styles
-	wordmark := s.Base.Bold(true).Render("forge")
+	// Pin Bg on every text piece. Lipgloss resets SGR (incl. background) after
+	// each styled run, so foreground-only styles leave their glyph cells at the
+	// terminal-default background — visible as bleed-through on a light terminal
+	// even though View()/Place paint the surrounding cells (plan 08c Tier 0).
+	wordmark := s.Base.Bold(true).Background(s.P.Bg).Render("forge")
 	composer := m.composerView()
 	if ac := m.autocompleteView(); ac != "" {
 		composer = lipgloss.JoinVertical(lipgloss.Left, ac, composer)
 	}
-	status := s.Faint.Render(m.statusLine())
+	status := s.Faint.Background(s.P.Bg).Render(m.statusLine())
 	if m.err != nil {
-		status = lipgloss.NewStyle().Foreground(s.P.Red).Render(m.err.Error())
+		status = lipgloss.NewStyle().Foreground(s.P.Red).Background(s.P.Bg).Render(m.err.Error())
 	}
-	hint := s.Faint.Render("enter send · ctrl+j newline · ctrl+p commands · ctrl+c quit")
+	hint := s.Faint.Background(s.P.Bg).Render("enter send · ctrl+j newline · ctrl+p commands · ctrl+c quit")
 
 	body := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", composer, "", hint, "", status)
 	if m.width == 0 || m.height == 0 {

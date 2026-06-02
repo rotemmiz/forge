@@ -50,6 +50,7 @@ const (
 	paAbort
 	paFork
 	paDelete
+	paDiff
 	paMCP
 	paSkills
 	paHelp
@@ -73,6 +74,7 @@ var paletteItems = []paletteCmd{
 	{"Fork session", paFork},
 	{"Summarize context", paSummarize},
 	{"Interrupt (abort turn)", paAbort},
+	{"Review changes (diff)", paDiff},
 	{"Share session", paShare},
 	{"Unshare session", paUnshare},
 	{"Delete session", paDelete},
@@ -314,6 +316,8 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, deleteSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paDiff:
+			return m.openDiff()
 		case paMCP:
 			m.modal, m.modalSel = modalMCP, 0
 			return m, loadMCPCmd(m.ctx, m.client)

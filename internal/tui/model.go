@@ -670,6 +670,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		sortFileDiffs(msg.files)
 		m.diff.files = msg.files
+		m.diff.treeRows = buildDiffTreeRows(msg.files) // cache; rows depend only on files
 		if m.diff.sel >= len(msg.files) {
 			m.diff.sel = 0
 		}

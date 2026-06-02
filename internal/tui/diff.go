@@ -33,6 +33,7 @@ type diffState struct {
 	loading  bool
 	err      error
 	files    []SnapshotFileDiff // sorted by path on load
+	treeRows []diffRow          // flattened tree, cached on load (files-only dependency)
 	sel      int                // selected file index (into files)
 	scroll   int                // patch-pane scroll offset (lines)
 	folded   map[int]bool       // file index -> patch collapsed
@@ -131,12 +132,21 @@ type diffRow struct {
 	fileIdx int
 }
 
-// diffTreeRows flattens the (path-sorted) files into directory headers + file
-// rows, mirroring opencode's buildFileTree/flattenFileTree shape.
+// diffTreeRows returns the flattened tree, preferring the cache built on load
+// (falls back to building it for directly-constructed states, e.g. tests).
 func (m Model) diffTreeRows() []diffRow {
+	if m.diff.treeRows != nil {
+		return m.diff.treeRows
+	}
+	return buildDiffTreeRows(m.diff.files)
+}
+
+// buildDiffTreeRows flattens the (path-sorted) files into directory headers +
+// file rows, mirroring opencode's buildFileTree/flattenFileTree shape.
+func buildDiffTreeRows(files []SnapshotFileDiff) []diffRow {
 	var rows []diffRow
 	var prev []string
-	for fi, f := range m.diff.files {
+	for fi, f := range files {
 		parts := strings.Split(f.File, "/")
 		dirs, base := parts[:len(parts)-1], parts[len(parts)-1]
 		common := 0
@@ -222,10 +232,7 @@ func (m Model) diffView() string {
 
 // diffCenter centers a short message on the full screen.
 func (m Model) diffCenter(body string) string {
-	if m.width == 0 || m.height == 0 {
-		return body
-	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	return centerScreen(m.width, m.height, body)
 }
 
 // diffTreePane renders the file-tree pane windowed around the selection.
@@ -239,20 +246,7 @@ func (m Model) diffTreePane(width, height int) string {
 			break
 		}
 	}
-	start := 0
-	if len(rows) > height {
-		start = selRow - height/2
-		if start < 0 {
-			start = 0
-		}
-		if hi := len(rows) - height; start > hi {
-			start = hi
-		}
-	}
-	end := start + height
-	if end > len(rows) {
-		end = len(rows)
-	}
+	start, end := windowAround(selRow, len(rows), height)
 
 	var lines []string
 	for i := start; i < end; i++ {
@@ -288,41 +282,40 @@ func (m Model) diffTreePane(width, height int) string {
 func (m Model) diffPatchPane(width, height int) string {
 	s := m.styles
 	if m.diff.sel >= len(m.diff.files) {
-		return ""
+		return padLines(nil, height) // keep the column height for separator alignment
 	}
 	f := m.diff.files[m.diff.sel]
 
-	header := s.Base.Bold(true).Render(truncate(f.File, width))
 	if m.diff.folded[m.diff.sel] {
-		body := []string{header, "", s.Faint.Render("(folded — space to expand)")}
+		body := []string{s.Base.Bold(true).Render(truncate(f.File, width)), "", s.Faint.Render("(folded — space to expand)")}
 		return padLines(body, height)
 	}
 
-	var lines []string
-	lines = append(lines, header, "")
-	patch := f.Patch
-	if strings.TrimSpace(patch) == "" {
-		lines = append(lines, s.Faint.Render("(no textual patch — "+f.Status+")"))
+	// Build the raw (unstyled) line list — header, blank, then the patch — and
+	// window it BEFORE styling, so a huge patch only styles its visible rows.
+	noPatch := strings.TrimSpace(f.Patch) == ""
+	raw := []string{f.File, ""}
+	if noPatch {
+		raw = append(raw, "(no textual patch — "+f.Status+")")
 	} else {
-		for _, ln := range strings.Split(patch, "\n") {
-			lines = append(lines, m.diffLineStyle(ln).Render(truncate(ln, width)))
+		raw = append(raw, strings.Split(f.Patch, "\n")...)
+	}
+	start, end := windowFrom(m.diff.scroll, len(raw), height)
+
+	out := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		switch {
+		case i == 0: // file header
+			out = append(out, s.Base.Bold(true).Render(truncate(raw[i], width)))
+		case i == 1: // blank spacer
+			out = append(out, "")
+		case noPatch: // the single sentinel line
+			out = append(out, s.Faint.Render(raw[i]))
+		default: // a unified-diff line
+			out = append(out, m.diffLineStyle(raw[i]).Render(truncate(raw[i], width)))
 		}
 	}
-
-	// Window to height by the (clamped) scroll offset.
-	maxOff := len(lines) - height
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	off := m.diff.scroll
-	if off > maxOff {
-		off = maxOff
-	}
-	end := off + height
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return padLines(lines[off:end], height)
+	return padLines(out, height)
 }
 
 // diffLineStyle colors a unified-diff line by its leading marker.

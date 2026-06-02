@@ -401,32 +401,15 @@ func (m Model) modalView() string {
 		panel := lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).BorderForeground(s.P.Border).
 			Padding(1, 2).Width(width).Render(body)
-		if m.width == 0 || m.height == 0 {
-			return panel
-		}
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel)
+		return centerScreen(m.width, m.height, panel)
 	}
 
 	title, rows, footer := m.modalItems()
 
 	// Window long lists around the selection so a provider with hundreds of
-	// models (or many sessions) can't overflow the panel. Scroll is Phase 3;
-	// this keeps the modal bounded until then.
+	// models (or many sessions) can't overflow the panel.
 	const maxRows = 12
-	start := 0
-	if len(rows) > maxRows {
-		start = m.modalSel - maxRows/2
-		if start < 0 {
-			start = 0
-		}
-		if hi := len(rows) - maxRows; start > hi {
-			start = hi
-		}
-	}
-	end := start + maxRows
-	if end > len(rows) {
-		end = len(rows)
-	}
+	start, end := windowAround(m.modalSel, len(rows), maxRows)
 
 	var lines []string
 	lines = append(lines, s.Section.Render(title), "")
@@ -452,8 +435,5 @@ func (m Model) modalView() string {
 		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 
-	if m.width == 0 || m.height == 0 {
-		return panel
-	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel)
+	return centerScreen(m.width, m.height, panel)
 }

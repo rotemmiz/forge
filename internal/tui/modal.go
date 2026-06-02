@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,6 +24,10 @@ const (
 	modalThemes
 	modalTimeline
 	modalStatus
+	modalRename // text-input overlay (rename the current session)
+	modalMCP    // read-only: configured MCP servers (GET /mcp)
+	modalSkills // read-only: available skills (GET /skill)
+	modalHelp   // read-only: keybindings / commands reference
 )
 
 // paletteAction identifies a command-palette entry (dispatched by id, not index,
@@ -37,6 +43,16 @@ const (
 	paTimeline
 	paStatus
 	paRefresh
+	paRename
+	paShare
+	paUnshare
+	paSummarize
+	paAbort
+	paFork
+	paDelete
+	paMCP
+	paSkills
+	paHelp
 )
 
 type paletteCmd struct {
@@ -53,6 +69,16 @@ var paletteItems = []paletteCmd{
 	{"Switch theme", paSwitchTheme},
 	{"Timeline", paTimeline},
 	{"Status", paStatus},
+	{"Rename session", paRename},
+	{"Fork session", paFork},
+	{"Summarize context", paSummarize},
+	{"Interrupt (abort turn)", paAbort},
+	{"Share session", paShare},
+	{"Unshare session", paUnshare},
+	{"Delete session", paDelete},
+	{"MCP servers", paMCP},
+	{"Skills", paSkills},
+	{"Keybindings / help", paHelp},
 	{"Refresh sessions", paRefresh},
 }
 
@@ -160,6 +186,33 @@ func (m Model) modalItems() (title string, rows []string, footer string) {
 			rows = append(rows, truncate(line, 52)) // keep within the panel
 		}
 		return "Status", rows, "esc close"
+	case modalMCP:
+		for _, s := range m.mcpServers {
+			row := s.Name
+			if s.Status != "" {
+				row += "  " + s.Status
+			}
+			rows = append(rows, truncate(row, 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no MCP servers)"}
+		}
+		return "MCP servers", rows, "esc close"
+	case modalSkills:
+		for _, s := range m.skills {
+			row := s.Name
+			if s.Description != "" {
+				row += "  " + s.Description
+			}
+			rows = append(rows, truncate(row, 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no skills)"}
+		}
+		return "Skills", rows, "esc close"
+	case modalHelp:
+		rows = helpRows()
+		return "Keybindings", rows, "esc close"
 	default:
 		return "", nil, ""
 	}
@@ -207,6 +260,69 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		case paStatus:
 			m.modal, m.modalSel = modalStatus, 0
 			return m, nil
+		case paRename:
+			if m.cfg.SessionID == "" {
+				m.status = "no session to rename"
+				return m, nil
+			}
+			m.modal = modalRename
+			if cur := m.currentSession(); cur != nil {
+				m.renameInput.SetValue(cur.Title)
+			}
+			m.renameInput.CursorEnd()
+			m.renameInput.Focus()
+			return m, nil
+		case paShare:
+			if m.cfg.SessionID == "" {
+				m.status = "no session to share"
+				return m, nil
+			}
+			cur := m.currentSession()
+			if cur != nil && cur.Share != nil && cur.Share.URL != "" {
+				sh := cur.Share
+				m.status = "shared · " + sh.URL + " (copied)"
+				return m, copyClipboardCmd(sh.URL)
+			}
+			m.status = "sharing…"
+			return m, shareSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paUnshare:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			return m, unshareSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paSummarize:
+			if m.cfg.SessionID == "" || !m.model.ok() {
+				m.status = "summarize needs an open session + model"
+				return m, nil
+			}
+			m.status = "summarizing…"
+			return m, summarizeSessionCmd(m.ctx, m.client, m.cfg.SessionID, m.model)
+		case paAbort:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			m.status = "interrupting…"
+			return m, abortSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paFork:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			m.status = "forking…"
+			return m, forkSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paDelete:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			return m, deleteSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paMCP:
+			m.modal, m.modalSel = modalMCP, 0
+			return m, loadMCPCmd(m.ctx, m.client)
+		case paSkills:
+			m.modal, m.modalSel = modalSkills, 0
+			return m, loadSkillsCmd(m.ctx, m.client)
+		case paHelp:
+			m.modal, m.modalSel = modalHelp, 0
+			return m, nil
 		case paRefresh:
 			return m, loadSessionsCmd(m.ctx, m.client)
 		}
@@ -223,6 +339,7 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		if m.modalSel < len(m.choices) {
 			m.model = promptModel(m.choices[m.modalSel])
 			m.status = "model · " + m.model.label()
+			m.persist() // remember the model across runs
 		}
 	case modalAgents:
 		m.modal = modalNone
@@ -235,6 +352,7 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		if ps := theme.Palettes(); m.modalSel < len(ps) {
 			m = m.applyTheme(ps[m.modalSel].Name, ps[m.modalSel].Palette)
 			m.status = "theme · " + m.themeName
+			m.persist() // remember the theme across runs
 		}
 	case modalTimeline:
 		items := m.timelineItems()
@@ -243,18 +361,49 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 			m.status = "reverting…"
 			return m, revertCmd(m.ctx, m.client, m.cfg.SessionID, items[m.modalSel].messageID)
 		}
-	case modalStatus:
+	case modalStatus, modalMCP, modalSkills, modalHelp:
 		m.modal = modalNone // read-only — enter just closes
+	case modalRename:
+		title := strings.TrimSpace(m.renameInput.Value())
+		id := m.cfg.SessionID
+		m.modal, m.renameInput = modalNone, blurInput(m.renameInput)
+		if title != "" && id != "" {
+			return m, renameSessionCmd(m.ctx, m.client, id, title)
+		}
 	}
 	return m, nil
+}
+
+// blurInput clears the value + focus of a text input (reset between uses).
+func blurInput(ti textinput.Model) textinput.Model {
+	ti.Blur()
+	ti.SetValue("")
+	return ti
 }
 
 // modalView renders the active modal as a centered panel over the background.
 func (m Model) modalView() string {
 	s := m.styles
-	title, rows, footer := m.modalItems()
 
 	width := 56
+
+	// The rename overlay is a single text field, not a list.
+	if m.modal == modalRename {
+		body := lipgloss.JoinVertical(lipgloss.Left,
+			s.Section.Render("Rename session"), "",
+			m.renameInput.View(), "",
+			s.Faint.Render("enter save · esc cancel"),
+		)
+		panel := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).BorderForeground(s.P.Border).
+			Padding(1, 2).Width(width).Render(body)
+		if m.width == 0 || m.height == 0 {
+			return panel
+		}
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel)
+	}
+
+	title, rows, footer := m.modalItems()
 
 	// Window long lists around the selection so a provider with hundreds of
 	// models (or many sessions) can't overflow the panel. Scroll is Phase 3;

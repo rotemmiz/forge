@@ -172,6 +172,71 @@ func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) 
 	return nil
 }
 
+// PatchJSON performs an authed PATCH of a JSON body to a path and, if dst is
+// non-nil and a body is returned, decodes the JSON response into it.
+func (c *ForgeClient) PatchJSON(ctx context.Context, path string, body, dst any) error {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+path, rdr)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("PATCH %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("PATCH %s: status %d", path, resp.StatusCode)
+	}
+	if dst == nil || resp.StatusCode == http.StatusNoContent {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
+}
+
+// DeleteJSON performs an authed DELETE and decodes a JSON response body into dst
+// (some endpoints, e.g. /session/{id}/share, return the updated resource).
+func (c *ForgeClient) DeleteJSON(ctx context.Context, path string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	_ = c.injectHeaders(ctx, req)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.rest.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("DELETE %s: status %d", path, resp.StatusCode)
+	}
+	if dst == nil || resp.StatusCode == http.StatusNoContent {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
+}
+
 // Delete performs an authed DELETE on a path. Non-2xx is an error.
 func (c *ForgeClient) Delete(ctx context.Context, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)

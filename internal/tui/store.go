@@ -20,6 +20,12 @@ type Session struct {
 	Directory string        `json:"directory"`
 	Cost      float64       `json:"cost"`
 	Tokens    SessionTokens `json:"tokens"`
+	Share     *SessionShare `json:"share,omitempty"`
+}
+
+// SessionShare carries a published share link (session.share.url).
+type SessionShare struct {
+	URL string `json:"url"`
 }
 
 // SessionTokens is the running token accounting carried on a session.

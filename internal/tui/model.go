@@ -6,9 +6,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -76,14 +78,18 @@ type Model struct {
 	store store
 
 	// Composer.
-	input textarea.Model
-	model promptModel
+	input     textarea.Model
+	model     promptModel
+	shellMode bool // composer is in `!` shell mode (submit → POST /session/{id}/shell)
 
 	// Command overlay.
 	modal        modalKind
 	modalSel     int
-	permSel      int  // selected choice in the permission overlay
-	permReplying bool // a permission reply is in flight (overlay stays up until it resolves)
+	renameInput  textinput.Model // text-input overlay (rename current session)
+	mcpServers   []mcpItem       // read-only MCP list (GET /mcp)
+	skills       []skillItem     // read-only skills list (GET /skill)
+	permSel      int             // selected choice in the permission overlay
+	permReplying bool            // a permission reply is in flight (overlay stays up until it resolves)
 
 	// Question overlay (steps through a request's questions).
 	qIdx      int        // current question index
@@ -100,14 +106,19 @@ type Model struct {
 	ac       autocomplete // composer "/" popup state
 
 	// Chrome.
-	agent         string      // active agent (status bar "mode"); empty → default
-	agents        []agentItem // selectable agents (GET /agent)
-	themeName     string      // active theme name (theme switcher)
-	sidebarHidden bool        // right sidebar visibility (toggle: ctrl+x b)
-	streamWidth   int         // transient: stream column width when the sidebar is shown
-	leader        bool        // ctrl+x leader pressed, awaiting the chord key
-	tasksOpen     bool        // tasks dock visibility (toggle: ctrl+x t)
-	todos         []Todo      // current session's todos (tasks dock)
+	agent          string      // active agent (status bar "mode"); empty → default
+	agents         []agentItem // selectable agents (GET /agent)
+	themeName      string      // active theme name (theme switcher)
+	sidebarHidden  bool        // right sidebar visibility (toggle: ctrl+x b)
+	streamWidth    int         // transient: stream column width when the sidebar is shown
+	leader         bool        // ctrl+x leader pressed, awaiting the chord key
+	tasksOpen      bool        // tasks dock visibility (toggle: ctrl+x t)
+	todos          []Todo      // current session's todos (tasks dock)
+	scrollOffset   int         // stream scrollback: lines hidden below the viewport (0 = live tail)
+	view           viewState   // display toggles (timestamps, tool output, thinking)
+	history        []string    // submitted prompts (persisted; recalled with up/down when empty)
+	histIdx        int         // browse cursor into history (-1 = not browsing)
+	persistEnabled bool        // gate local-KV reads/writes (off in tests; on via Restore)
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -125,19 +136,24 @@ func New(cfg Config) Model {
 	ta.FocusedStyle.Base = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	ta.Focus()
+	ri := textinput.New()
+	ri.Placeholder = "Session title"
+	ri.CharLimit = 200
 	m := Model{
-		cfg:    cfg,
-		screen: ScreenSplash,
-		conn:   Connecting,
-		status: "connecting to " + cfg.URL,
-		ctx:    ctx,
-		cancel: cancel,
-		store:  newStore(),
-		input:  ta,
-		model:  promptModel{Provider: cfg.Provider, Model: cfg.Model},
+		cfg:         cfg,
+		screen:      ScreenSplash,
+		conn:        Connecting,
+		status:      "connecting to " + cfg.URL,
+		ctx:         ctx,
+		cancel:      cancel,
+		store:       newStore(),
+		input:       ta,
+		renameInput: ri,
+		model:       promptModel{Provider: cfg.Provider, Model: cfg.Model},
 	}
 	def := theme.Palettes()[0] // forge-dark; keeps themeName + styles + composer in sync
 	m = m.applyTheme(def.Name, def.Palette)
+	m.histIdx = -1
 	c, err := forgeclient.New(cfg.URL, forgeclient.Options{
 		Directory: cfg.Directory, Username: cfg.Username, Password: cfg.Password,
 	})
@@ -160,6 +176,32 @@ func (m Model) applyTheme(name string, p theme.Palette) Model {
 	ph := lipgloss.NewStyle().Foreground(p.FgGhost)
 	m.input.FocusedStyle.Text, m.input.FocusedStyle.Placeholder = txt, ph
 	m.input.BlurredStyle.Text, m.input.BlurredStyle.Placeholder = txt, ph
+	return m
+}
+
+// Restore loads the persisted theme/model/history from the local KV and turns on
+// persistence. Call once from the real entrypoint (not in tests, which want a
+// hermetic New). CLI --provider/--model still win.
+func (m Model) Restore() Model {
+	m.persistEnabled = true
+	kv := loadKV()
+	m.history, m.histIdx = kv.History, -1
+	if kv.Theme != "" {
+		m = m.applyThemeByName(kv.Theme)
+	}
+	if !m.model.ok() && kv.Provider != "" && kv.Model != "" {
+		m.model = promptModel{Provider: kv.Provider, Model: kv.Model}
+	}
+	return m
+}
+
+// applyThemeByName switches to a palette by name (no-op if unknown).
+func (m Model) applyThemeByName(name string) Model {
+	for _, p := range theme.Palettes() {
+		if p.Name == name {
+			return m.applyTheme(p.Name, p.Palette)
+		}
+	}
 	return m
 }
 
@@ -220,7 +262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · o tools · e editor"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall
@@ -234,10 +276,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+p":
 			m.modal, m.modalSel = modalPalette, 0
 			return m, nil
+		case "ctrl+up", "pgup":
+			m.scrollOffset += scrollStep
+			return m, nil
+		case "ctrl+down", "pgdown", "pgdn":
+			m.scrollOffset -= scrollStep
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
+			return m, nil
+		case "up":
+			if nm, ok := m.historyRecall(-1); ok {
+				return nm, nil
+			}
+		case "down":
+			if nm, ok := m.historyRecall(+1); ok {
+				return nm, nil
+			}
+		case "!":
+			// `!` at the start of an empty composer enters shell mode (opencode
+			// prompt-input.tsx:1160); a real "!" mid-text falls through to typing.
+			if !m.shellMode && strings.TrimSpace(m.input.Value()) == "" {
+				m.shellMode = true
+				return m, nil
+			}
+		case "esc":
+			if m.shellMode {
+				m.shellMode = false
+				return m, nil
+			}
 		case "enter":
 			return m.submit()
 		}
 		// Everything else goes to the composer (shift+enter / ctrl+j add a newline).
+		m.histIdx = -1 // editing exits history browse
 		var cmd, acCmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m = m.resizeComposer()             // auto-grow to fit the new content
@@ -363,6 +435,109 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case renamedMsg:
+		if msg.err != nil {
+			m.status = "rename failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID != "" {
+			m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		}
+		m.status = "renamed"
+		return m, nil
+
+	case sharedMsg:
+		if msg.err != nil {
+			m.status = "share failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID != "" {
+			m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		}
+		if msg.shared {
+			if sh := msg.session.Share; sh != nil && sh.URL != "" {
+				m.status = "shared · " + sh.URL + " (copied)"
+				return m, copyClipboardCmd(sh.URL)
+			}
+			m.status = "shared"
+		} else {
+			m.status = "unshared"
+		}
+		return m, nil
+
+	case summarizedMsg:
+		if msg.err != nil {
+			m.status = "summarize failed: " + msg.err.Error()
+		} else {
+			m.status = "summarizing context…"
+		}
+		return m, nil
+
+	case abortedMsg:
+		if msg.err != nil {
+			m.status = "interrupt failed: " + msg.err.Error()
+		} else {
+			m.status = "interrupted"
+		}
+		return m, nil
+
+	case forkedMsg:
+		if msg.err != nil {
+			m.status = "fork failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID == "" {
+			m.status = "fork: empty response"
+			return m, nil
+		}
+		m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		m.cfg.SessionID, m.screen = msg.session.ID, ScreenSession
+		m.status = "forked"
+		return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
+
+	case mcpLoadedMsg:
+		if msg.err != nil {
+			if m.modal == modalMCP {
+				m.status = "mcp: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.mcpServers = msg.items
+		return m, nil
+
+	case skillsLoadedMsg:
+		if msg.err != nil {
+			if m.modal == modalSkills {
+				m.status = "skills: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.skills = msg.items
+		return m, nil
+
+	case clipboardCopiedMsg:
+		return m, nil
+
+	case editorDoneMsg:
+		if msg.path != "" {
+			if b, err := os.ReadFile(msg.path); err == nil {
+				m.input.SetValue(strings.TrimRight(string(b), "\n"))
+				m.input.CursorEnd()
+				m = m.resizeComposer()
+			}
+			_ = os.Remove(msg.path)
+		}
+		if msg.err != nil {
+			m.status = "editor: " + msg.err.Error()
+		}
+		return m, nil
+
+	case shellSentMsg:
+		if msg.err != nil {
+			m.status = "shell failed: " + msg.err.Error()
+		}
+		return m, nil
+
 	case permissionRepliedMsg:
 		m.permReplying = false
 		if msg.err != nil {
@@ -446,11 +621,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.resetQuestion()
 		}
 		m.status = fmt.Sprintf("connected · %d events · %d sessions", m.eventCount, len(m.store.sessions))
+		cmds := []tea.Cmd{listenCmd(m.stream)}
+		// Ring the bell when the agent blocks on input — the terminal may be unfocused.
+		if msg.ev.Type == "permission.asked" || msg.ev.Type == "question.asked" {
+			cmds = append(cmds, bellCmd())
+		}
 		// A todowrite tool part changed the todos — refetch (no todo SSE event).
 		if m.tasksOpen && m.cfg.SessionID != "" && isTodoWriteEvent(msg.ev) {
-			return m, tea.Batch(listenCmd(m.stream), loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
+			cmds = append(cmds, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
 		}
-		return m, listenCmd(m.stream)
+		return m, tea.Batch(cmds...)
 
 	case todosLoadedMsg:
 		if msg.err == nil && msg.sessionID == m.cfg.SessionID {
@@ -477,6 +657,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleModalKey routes keys while a command overlay is open.
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The rename overlay is a text input: enter submits, esc cancels, everything
+	// else edits the field.
+	if m.modal == modalRename {
+		switch msg.String() {
+		case "esc":
+			m.modal, m.renameInput = modalNone, blurInput(m.renameInput)
+			return m, nil
+		case "enter":
+			return m.modalSelect()
+		}
+		var cmd tea.Cmd
+		m.renameInput, cmd = m.renameInput.Update(msg)
+		return m, cmd
+	}
 	switch msg.String() {
 	case "esc":
 		m.modal, m.modalSel = modalNone, 0
@@ -501,6 +695,17 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.modal == modalSessions {
 			if ss := m.orderedSessions(); m.modalSel < len(ss) {
 				return m, deleteSessionCmd(m.ctx, m.client, ss[m.modalSel].ID)
+			}
+		}
+		return m, nil
+	case "y":
+		if m.modal == modalTimeline {
+			if items := m.timelineItems(); m.modalSel < len(items) {
+				if txt := m.messageText(items[m.modalSel].messageID); txt != "" {
+					m.modal, m.modalSel = modalNone, 0
+					m.status = "copied turn"
+					return m, copyClipboardCmd(txt)
+				}
 			}
 		}
 		return m, nil
@@ -587,12 +792,30 @@ func (m Model) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID)
 		}
 		return m, nil
+	case "y":
+		if txt := m.lastAssistantText(); txt != "" {
+			m.status = "copied last response"
+			return m, copyClipboardCmd(txt)
+		}
+		m.status = "nothing to copy"
+		return m, nil
+	case "r":
+		m.view.hideThinking = !m.view.hideThinking
+		m.status = toggleHint("thinking", !m.view.hideThinking)
+		return m, nil
+	case "o":
+		m.view.hideTools = !m.view.hideTools
+		m.status = toggleHint("tool output", !m.view.hideTools)
+		return m, nil
+	case "e":
+		return m, openEditorCmd(m.input.Value())
 	}
 	return m, nil
 }
 
 // submit sends the composer's text: it creates a session first if none is open,
-// then prompts. Requires a resolved model.
+// then prompts. In shell mode it runs the text as a shell command instead.
+// Requires a resolved model.
 func (m Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
@@ -602,12 +825,77 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		m.status = "no model configured (pass --provider/--model)"
 		return m, nil
 	}
+	m = m.pushHistory(text) // remember the submission for up/down recall
+	m.persist()
+	// Shell mode: run the text as a command in the open session; output streams
+	// back as tool parts. Requires an existing session (no implicit create).
+	if m.shellMode {
+		m.shellMode = false
+		if m.cfg.SessionID == "" {
+			m.status = "open a session before running a shell command"
+			return m, nil
+		}
+		m.input.SetValue("")
+		m = m.resizeComposer()
+		return m, shellCmd(m.ctx, m.client, m.cfg.SessionID, text, m.effectiveAgent(), m.model)
+	}
 	m.input.SetValue("")
 	m = m.resizeComposer() // collapse back to one row
+	m.scrollOffset = 0     // a new prompt snaps the stream back to the live tail
 	if m.cfg.SessionID == "" {
 		return m, createSessionCmd(m.ctx, m.client, text)
 	}
 	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model, m.agent)
+}
+
+// scrollStep is the lines moved per scrollback keypress.
+const scrollStep = 3
+
+// historyRecall walks the prompt history with up (dir -1, older) / down (dir +1,
+// newer). It only starts browsing from an empty composer (so a draft isn't
+// clobbered); walking past the newest entry exits and clears. Returns false when
+// the key should fall through to normal composer editing.
+func (m Model) historyRecall(dir int) (Model, bool) {
+	if len(m.history) == 0 {
+		return m, false
+	}
+	if m.histIdx == -1 {
+		if dir > 0 || strings.TrimSpace(m.input.Value()) != "" {
+			return m, false // down with no browse, or a non-empty draft → fall through
+		}
+		m.histIdx = len(m.history) - 1
+	} else {
+		m.histIdx += dir
+		if m.histIdx < 0 {
+			m.histIdx = 0
+		}
+		if m.histIdx >= len(m.history) { // walked past newest → live composer
+			m.histIdx = -1
+			m.input.SetValue("")
+			return m.resizeComposer(), true
+		}
+	}
+	m.input.SetValue(m.history[m.histIdx])
+	m.input.CursorEnd()
+	return m.resizeComposer(), true
+}
+
+// effectiveAgent resolves an agent name for endpoints that require one (shell):
+// the selected agent, else a "build"-named agent, else the first available, else
+// "build" as a last resort.
+func (m Model) effectiveAgent() string {
+	if m.agent != "" {
+		return m.agent
+	}
+	for _, a := range m.agents {
+		if a.name == "build" {
+			return a.name
+		}
+	}
+	if len(m.agents) > 0 {
+		return m.agents[0].name
+	}
+	return "build"
 }
 
 // View renders the active screen (or the command overlay when one is open). The

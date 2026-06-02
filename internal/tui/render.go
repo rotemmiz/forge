@@ -74,11 +74,14 @@ func (m Model) renderMessage(msg Message, parts []Part) string {
 				out = append(out, m.prose(txt))
 			}
 		case "reasoning":
-			if strings.TrimSpace(p.Text) == "" {
+			if m.view.hideThinking || strings.TrimSpace(p.Text) == "" {
 				continue
 			}
 			out = append(out, m.thinking(p.Text))
 		case "tool":
+			if m.view.hideTools {
+				continue
+			}
 			out = append(out, m.toolRow(p))
 		}
 	}
@@ -176,12 +179,21 @@ func (m Model) barWidth() int {
 // and pins the status line at the bottom.
 // composerView renders the prompt input with the design's blue left accent bar.
 func (m Model) composerView() string {
+	accent := m.styles.P.Blue
+	if m.shellMode {
+		accent = m.styles.P.Red // shell mode: distinct accent so it's unmistakable
+	}
 	bar := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
-		BorderForeground(m.styles.P.Blue).
+		BorderForeground(accent).
 		PaddingLeft(1).
 		Width(m.barWidth()) // -1: the left border renders outside Width
-	return bar.Render(m.input.View())
+	view := bar.Render(m.input.View())
+	if m.shellMode {
+		label := lipgloss.NewStyle().Foreground(m.styles.P.Red).Render("! shell — enter run · esc cancel")
+		return lipgloss.JoinVertical(lipgloss.Left, label, view)
+	}
+	return view
 }
 
 // statusLine is the bottom status: connection state plus the active model.
@@ -201,7 +213,18 @@ func (m Model) frame(body, footer string) string {
 	}
 	lines := strings.Split(body, "\n")
 	if len(lines) > avail {
-		lines = lines[len(lines)-avail:]
+		// Window the body to `avail` lines, scrolled up from the bottom by
+		// scrollOffset (clamped so we can't scroll past the top/bottom).
+		maxOff := len(lines) - avail
+		off := m.scrollOffset
+		if off > maxOff {
+			off = maxOff
+		}
+		if off < 0 {
+			off = 0
+		}
+		end := len(lines) - off
+		lines = lines[end-avail : end]
 	} else {
 		for len(lines) < avail { // pad so footer sits at the bottom
 			lines = append(lines, "")

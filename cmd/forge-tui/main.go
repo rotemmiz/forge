@@ -30,7 +30,7 @@ func main() {
 		URL: *url, Directory: *dir, SessionID: *session,
 		Username: *username, Password: *password,
 		Provider: *provider, Model: *modelID,
-	})
+	}).Restore() // restore persisted theme/model/history + enable persistence
 
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forge-tui:", err)

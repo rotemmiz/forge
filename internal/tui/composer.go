@@ -27,6 +27,7 @@ func (p promptModel) label() string {
 // Composer / submit messages.
 type (
 	promptSentMsg     struct{ err error }
+	shellSentMsg      struct{ err error }
 	sessionCreatedMsg struct {
 		session   Session
 		text      string // a prompt to send after creation, or…
@@ -36,6 +37,26 @@ type (
 	}
 	configLoadedMsg struct{ provider, model string }
 )
+
+// shellBody is the POST /session/:id/shell request body (opencode ShellInput).
+// agent is required by the endpoint; model is optional.
+type shellBody struct {
+	Command string          `json:"command"`
+	Agent   string          `json:"agent"`
+	Model   promptModelWire `json:"model,omitempty"`
+}
+
+// shellCmd runs a shell command in the session context (POST /session/:id/shell).
+// The command's output streams back as normal tool parts via message.part.* SSE.
+func shellCmd(ctx context.Context, c *forgeclient.ForgeClient, sessionID, command, agent string, pm promptModel) tea.Cmd {
+	return func() tea.Msg {
+		body := shellBody{Command: command, Agent: agent}
+		if pm.ok() {
+			body.Model = promptModelWire{ProviderID: pm.Provider, ModelID: pm.Model}
+		}
+		return shellSentMsg{err: c.PostJSON(ctx, "/session/"+sessionID+"/shell", body, nil)}
+	}
+}
 
 // promptBody is the POST /session/:id/message request body.
 type promptBody struct {

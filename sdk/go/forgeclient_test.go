@@ -189,3 +189,42 @@ func TestPostJSON_Tolerates204(t *testing.T) {
 		t.Fatalf("204 should be tolerated: %v", err)
 	}
 }
+
+func TestPatchJSON_SendsBodyDecodesResponse(t *testing.T) {
+	var gotMethod, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotMethod, gotBody = r.Method, string(b)
+		_, _ = io.WriteString(w, `{"id":"ses_1","title":"Renamed"}`)
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, Options{HTTPClient: srv.Client()})
+	var out struct {
+		Title string `json:"title"`
+	}
+	if err := c.PatchJSON(context.Background(), "/session/ses_1", map[string]any{"title": "Renamed"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPatch || out.Title != "Renamed" || !strings.Contains(gotBody, `"title":"Renamed"`) {
+		t.Fatalf("patch wrong: method=%q out=%+v body=%q", gotMethod, out, gotBody)
+	}
+}
+
+func TestDeleteJSON_DecodesResponse(t *testing.T) {
+	var gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		_, _ = io.WriteString(w, `{"id":"ses_1"}`)
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, Options{HTTPClient: srv.Client()})
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := c.DeleteJSON(context.Background(), "/session/ses_1/share", &out); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || out.ID != "ses_1" {
+		t.Fatalf("delete-json wrong: method=%q out=%+v", gotMethod, out)
+	}
+}

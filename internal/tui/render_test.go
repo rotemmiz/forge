@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// Note: stripANSI is defined in ptypane_test.go (package-level, same test package).
+
 func rawState(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -37,6 +39,11 @@ func seededSessionModel(t *testing.T) Model {
 
 func TestRenderSession_ShowsAllBlockKinds(t *testing.T) {
 	out := seededSessionModel(t).View()
+	// Strip ANSI escapes before substring search: prose() now renders via
+	// glamour which emits SGR codes in TTY environments.  The text content is
+	// still present; stripping lets Contains find it reliably.
+	// stripANSI is defined in ptypane_test.go (same test package).
+	plain := stripANSI(out)
 	for _, want := range []string{
 		"Fix the bug",          // session title
 		"fix the failing test", // user turn
@@ -45,8 +52,8 @@ func TestRenderSession_ShowsAllBlockKinds(t *testing.T) {
 		"main_test.go",         // tool title
 		"All green now.",       // assistant prose
 	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("rendered session missing %q in:\n%s", want, out)
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered session missing %q (checked plain text, ANSI stripped)", want)
 		}
 	}
 }
@@ -90,10 +97,10 @@ func TestRenderSession_SurfacesAssistantError(t *testing.T) {
 	a.Error = &MsgError{Name: "ProviderAuthError"}
 	a.Error.Data.Message = "Google Generative AI API key is missing."
 	m.store.messages["ses_1"] = []Message{a}
-	out := m.View()
+	plain := stripANSI(m.View())
 	for _, want := range []string{"ProviderAuthError", "API key is missing"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("assistant error not surfaced (%q) in:\n%s", want, out)
+		if !strings.Contains(plain, want) {
+			t.Fatalf("assistant error not surfaced (%q) in plain output", want)
 		}
 	}
 }

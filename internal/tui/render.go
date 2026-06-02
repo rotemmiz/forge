@@ -115,8 +115,12 @@ func (m Model) userTurn(text string) string {
 	return bar.Render(m.styles.Base.Render(text))
 }
 
+// prose renders assistant text as styled markdown via glamour (plan 08c M4).
+// The glamour render is theme-driven (colors from m.styles.P.Markdown) and
+// cached by (text, width, themeName) so repeated frame renders are free.
+// Background fill is handled inside renderMarkdown (see markdown.go).
 func (m Model) prose(text string) string {
-	return lipgloss.NewStyle().Width(m.contentWidth()).Render(m.styles.Base.Render(text))
+	return m.renderMarkdown(text)
 }
 
 // thinking renders the design's "+ Thought" line (truncated to the column).

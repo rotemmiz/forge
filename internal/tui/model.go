@@ -138,6 +138,12 @@ type Model struct {
 	// when the user changes theme mid-session (mirrors opencode's theme_mode_lock
 	// + dark/light token resolution — context/theme.tsx resolveTheme).
 	termDark bool
+
+	// mdCache is the rendered-markdown cache for renderMarkdown (markdown.go).
+	// Key: (SHA-256 of text, content width, theme name).  Invalidated naturally
+	// by the theme name component: a theme switch produces cache misses and new
+	// entries for the new theme; old entries become unreachable and are GC'd.
+	mdCache mdCache
 }
 
 // pickDefaultTheme returns the appropriate default theme name based on whether
@@ -202,6 +208,9 @@ func New(cfg Config) Model {
 		return m
 	}
 	m.client = c
+	// Ensure the markdown render cache is allocated so all Model copies
+	// derived from this root share a non-nil map (maps are reference types).
+	m.ensureMDCache()
 	return m
 }
 

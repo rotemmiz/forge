@@ -29,3 +29,4 @@ coverage.*
 /internal/api/gen/openapi-3.0.derived.json
 /sdk/go/gen/openapi-3.0.derived.json
 android/.kotlin/
+.claude/worktrees/

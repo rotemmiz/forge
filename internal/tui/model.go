@@ -123,6 +123,9 @@ type Model struct {
 	// Diff reviewer (plan 08b §1).
 	diff           diffState // full-screen diff reviewer (open == active)
 	diffTreeHidden bool      // persisted: file-tree pane preference
+
+	// PTY pane (plan 08b §2).
+	pty ptyState // embedded terminal split (open == visible)
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -235,9 +238,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m = m.resizeComposer()
+		if cmd := m.resizePTY(); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case tea.KeyMsg:
+		// A focused terminal captures every key (ctrl+c included, so the shell can
+		// interrupt) — only ctrl+] escapes, handled inside handlePTYKey.
+		if m.pty.open && m.pty.focused {
+			return m.handlePTYKey(msg)
+		}
+		// An open-but-unfocused terminal: ctrl+] closes it.
+		if m.pty.open && msg.String() == "ctrl+]" {
+			m.closePTY()
+			return m, nil
+		}
 		// ctrl+c always quits.
 		if msg.String() == "ctrl+c" {
 			if m.stream != nil {
@@ -271,7 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · o tools · e editor · d diff · ↓ child · ↑ parent · [ ] siblings"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · o tools · e editor · d diff · ` terminal · ↓ child · ↑ parent · [ ] siblings"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall
@@ -676,6 +692,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ptyConnectedMsg:
+		if !m.pty.open { // pane closed while the dial was in flight
+			msg.conn.Close()
+			return m, nil
+		}
+		m.pty.connecting = false
+		if msg.err != nil {
+			m.pty.err = msg.err
+			return m, nil
+		}
+		m.pty.id, m.pty.conn = msg.id, msg.conn
+		return m, ptyReadCmd(msg.conn)
+
+	case ptyOutputMsg:
+		if m.pty.term != nil {
+			_, _ = m.pty.term.Write(msg.data)
+		}
+		if m.pty.open && m.pty.conn != nil { // keep pumping while connected
+			return m, ptyReadCmd(m.pty.conn)
+		}
+		return m, nil
+
+	case ptyClosedMsg:
+		m.pty.connecting = false
+		m.pty.conn = nil
+		if msg.err != nil {
+			m.pty.err = msg.err
+		}
+		return m, nil
+
 	case sseClosedMsg:
 		if m.stream != nil {
 			m.stream.Close() // release the closed stream's conn + context
@@ -849,6 +895,8 @@ func (m Model) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, openEditorCmd(m.input.Value())
 	case "d":
 		return m.openDiff() // full-screen diff reviewer
+	case "`":
+		return m.focusOrOpenPTY() // embedded terminal (ctrl+] to exit)
 	case "down":
 		return m.enterFirstChild() // descend into the first sub-agent child
 	case "up":

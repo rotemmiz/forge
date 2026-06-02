@@ -65,7 +65,7 @@ fun SessionInfoSheet(session: Session, onDismiss: () -> Unit) {
                 Text("No usage recorded yet.", fontSize = 13.sp, color = OnSurfaceFaint)
             }
             session.cost?.let { cost ->
-                InfoRow("Cost", "$" + String.format("%.4f", cost), emphasize = true)
+                InfoRow("Cost", "$" + String.format(java.util.Locale.US, "%.4f", cost), emphasize = true)
             }
 
             session.summary?.let { s ->

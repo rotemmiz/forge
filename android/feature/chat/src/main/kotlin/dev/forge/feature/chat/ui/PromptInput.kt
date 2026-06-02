@@ -92,9 +92,11 @@ fun PromptInput(
     }
 
     var fileResults by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Keep the latest search lambda without restarting the effect when only it changes.
+    val currentSearch by rememberUpdatedState(onSearchFiles)
     LaunchedEffect(mentionQuery) {
         fileResults = if (mentionQuery != null && mentionQuery.length >= 1) {
-            onSearchFiles(mentionQuery)
+            currentSearch(mentionQuery)
         } else {
             emptyList()
         }

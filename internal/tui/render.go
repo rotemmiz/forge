@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -123,46 +122,29 @@ func (m Model) prose(text string) string {
 	return m.renderMarkdown(text)
 }
 
-// thinking renders the design's "+ Thought" line (truncated to the column).
+// thinking renders the reasoning block. When collapsed (default) it shows a
+// one-liner "- Thought: <first line>"; when expanded it shows the full text
+// with an Amber header and muted body. Toggle: ctrl+x r (already flips
+// hideThinking) — a second chord ctrl+x R expands/collapses the full text.
+// plan 08c M7: foldable reasoning.
 func (m Model) thinking(text string) string {
-	head := "+ Thought "
-	body := truncate(firstLine(text), m.contentWidth()-lipgloss.Width(head))
-	return lipgloss.NewStyle().Foreground(m.styles.P.Amber).Render(head) + m.styles.Faint.Render(body)
-}
-
-// toolRow renders a terse tool one-liner colored by status (design tool grammar).
-func (m Model) toolRow(p Part) string {
 	s := m.styles
-	var st struct {
-		Status string `json:"status"`
-		Title  string `json:"title"`
-		Output string `json:"output"`
-		Error  string `json:"error"`
+	cw := m.contentWidth()
+	if m.view.expandedThinking {
+		// Expanded: amber header + muted body paragraphs.
+		header := lipgloss.NewStyle().Foreground(s.P.Amber).Render("▾ Thought")
+		body := s.Faint.Width(cw).Render(strings.TrimSpace(text))
+		return header + "\n" + body
 	}
-	_ = json.Unmarshal(p.State, &st)
-
-	glyph, gstyle := "•", lipgloss.NewStyle().Foreground(s.P.Amber)
-	switch st.Status {
-	case "completed":
-		glyph, gstyle = "✓", lipgloss.NewStyle().Foreground(s.P.Green)
-	case "error":
-		glyph, gstyle = "✗", lipgloss.NewStyle().Foreground(s.P.Red)
-	}
-	label := s.Dim.Render(p.Tool)
-	detail := st.Title
-	if detail == "" {
-		detail = st.Status
-	}
-	// Bound the row to the column: the prefix (glyph + tool) is short, so trim the
-	// detail to whatever space is left.
-	avail := m.contentWidth() - lipgloss.Width(glyph) - 1 - lipgloss.Width(p.Tool) - 1
-	row := gstyle.Render(glyph) + " " + label + " " + s.Faint.Render(truncate(detail, avail))
-	if st.Status == "error" && st.Error != "" {
-		errLine := truncate(firstLine(st.Error), m.contentWidth()-2)
-		row += "\n  " + lipgloss.NewStyle().Foreground(s.P.Red).Render(errLine)
-	}
-	return row
+	// Collapsed: single-line summary (first non-empty line of the text).
+	head := "▸ Thought "
+	summary := firstLine(strings.TrimSpace(text))
+	body := truncate(summary, cw-lipgloss.Width(head))
+	return lipgloss.NewStyle().Foreground(s.P.Amber).Render(head) + s.Faint.Render(body)
 }
+
+// toolRow is defined in toolrender.go (plan 08c M7): per-tool headers,
+// collapsible output panels, and todo-list rendering.
 
 func (m Model) contentWidth() int {
 	w := m.streamWidth // set when a sidebar narrows the stream column

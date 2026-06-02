@@ -355,7 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · o tools · e editor · d diff · ` terminal · w stash · ↓ child · ↑ parent · [ ] siblings"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · f fold thought · o tools · v fold tool · e editor · d diff · ` terminal · w stash · ↓ child · ↑ parent · [ ] siblings"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall
@@ -974,9 +974,33 @@ func (m Model) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view.hideThinking = !m.view.hideThinking
 		m.status = toggleHint("thinking", !m.view.hideThinking)
 		return m, nil
+	case "f":
+		// Toggle the expanded/collapsed state of the reasoning block (plan 08c M7).
+		// ctrl+x r hides thinking entirely; ctrl+x f expands/collapses the full text.
+		m.view.expandedThinking = !m.view.expandedThinking
+		if m.view.expandedThinking {
+			m.status = "thought: expanded"
+		} else {
+			m.status = "thought: collapsed"
+		}
+		return m, nil
 	case "o":
 		m.view.hideTools = !m.view.hideTools
 		m.status = toggleHint("tool output", !m.view.hideTools)
+		return m, nil
+	case "v":
+		// Toggle collapse on the last tool part (plan 08c M7 per-tool collapse).
+		// ctrl+x v collapses/expands the most recent tool's output panel.
+		if id := m.lastToolPartID(); id != "" {
+			m.view = m.view.toggleToolCollapse(id)
+			if m.view.isToolCollapsed(id) {
+				m.status = "tool output: collapsed"
+			} else {
+				m.status = "tool output: expanded"
+			}
+		} else {
+			m.status = "no tool to fold"
+		}
 		return m, nil
 	case "e":
 		return m, openEditorCmd(m.input.Value())

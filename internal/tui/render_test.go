@@ -31,7 +31,12 @@ func seededSessionModel(t *testing.T) Model {
 	m.store.parts["msg_2"] = []Part{
 		{ID: "prt_2", MessageID: "msg_2", Type: "reasoning", Text: "checking the test"},
 		{ID: "prt_3", MessageID: "msg_2", Type: "tool", Tool: "read",
-			State: rawState(t, map[string]any{"status": "completed", "title": "main_test.go"})},
+			// Pass filePath in input so toolHeader produces "Read main_test.go".
+			State: rawState(t, map[string]any{
+				"status": "completed",
+				"title":  "main_test.go",
+				"input":  map[string]any{"filePath": "main_test.go"},
+			})},
 		{ID: "prt_4", MessageID: "msg_2", Type: "text", Text: "All green now."},
 	}
 	return m
@@ -47,9 +52,9 @@ func TestRenderSession_ShowsAllBlockKinds(t *testing.T) {
 	for _, want := range []string{
 		"Fix the bug",          // session title
 		"fix the failing test", // user turn
-		"Thought",              // reasoning line
-		"read",                 // tool name
-		"main_test.go",         // tool title
+		"Thought",              // reasoning line (collapsed one-liner header)
+		"Read",                 // tool header (per-tool name, capitalised by toolHeader)
+		"main_test.go",         // salient arg extracted from input.filePath
 		"All green now.",       // assistant prose
 	} {
 		if !strings.Contains(plain, want) {
@@ -63,7 +68,9 @@ func TestToolRow_ErrorIsRedWithMessage(t *testing.T) {
 	m.width = 100
 	row := m.toolRow(Part{Tool: "bash", Type: "tool",
 		State: rawState(t, map[string]any{"status": "error", "error": "exit 1"})})
-	if !strings.Contains(row, "bash") || !strings.Contains(row, "exit 1") {
+	// toolHeader capitalises the tool name ("Bash") and the error appears on a
+	// sub-line prefixed with two spaces.
+	if !strings.Contains(row, "Bash") || !strings.Contains(row, "exit 1") {
 		t.Fatalf("error tool row wrong: %q", row)
 	}
 }

@@ -388,28 +388,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+t":
 			return m.cycleVariant(), nil // cycle model variants (opencode variant_cycle)
-		case "pgup", "pgdown", "pgdn":
-			// Page the stream. A page is the viewport height less a line of overlap.
-			m.scroll.Apply(scrollregion.Decode(msg.String()), scrollStep, m.height-1)
+		case "ctrl+up", "pgup":
+			// Scroll the stream. These keys never reach the composer, so the input
+			// box behaviour (plain ↑/↓ below) is untouched.
+			m.scroll.Back(scrollStep)
 			return m, nil
-		case "ctrl+up":
-			// History recall moved off the plain arrows (which now scroll, and which
-			// the wheel sends under alternate scroll mode) onto ctrl+↑/↓.
+		case "ctrl+down", "pgdown", "pgdn":
+			m.scroll.Forward(scrollStep)
+			return m, nil
+		case "up":
 			if nm, ok := m.historyRecall(-1); ok {
 				return nm, nil
 			}
-		case "ctrl+down":
+		case "down":
 			if nm, ok := m.historyRecall(+1); ok {
 				return nm, nil
-			}
-		case "up", "down":
-			// Plain ↑/↓ — and the mouse wheel, which arrives as these keys under
-			// alternate scroll mode — scroll the stream while the composer is empty
-			// (the natural reading state). With a draft present they fall through to
-			// the composer (textarea cursor / continued history browse).
-			if strings.TrimSpace(m.input.Value()) == "" {
-				m.scroll.Apply(scrollregion.Decode(msg.String()), scrollStep, m.height-1)
-				return m, nil
 			}
 		case "!":
 			// `!` at the start of an empty composer enters shell mode (opencode

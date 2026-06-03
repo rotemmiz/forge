@@ -94,50 +94,38 @@ func TestView_ScrollChangesStreamContent(t *testing.T) {
 	}
 }
 
-// TestKeyScroll_PlainArrowsScrollWhenComposerEmpty verifies the alternate-scroll
-// routing: with an empty composer, plain ↑/↓ (which is also what the mouse wheel
-// sends under DECSET 1007) move the stream's scroll offset, and ↓ can't go past
-// the live tail.
-func TestKeyScroll_PlainArrowsScrollWhenComposerEmpty(t *testing.T) {
+// TestKeyScroll_PageAndCtrlArrowsScroll verifies the stream scrolls on keys the
+// composer never consumes (pgup/pgdn, ctrl+↑/↓), and that ↓ can't pass the tail.
+func TestKeyScroll_PageAndCtrlArrowsScroll(t *testing.T) {
 	m := longSessionModel(t)
-	m, _ = step(t, m, key("up"))
-	m, _ = step(t, m, key("up"))
-	if m.scroll.Offset != 2*scrollStep {
-		t.Fatalf("two ↑: Offset=%d want %d", m.scroll.Offset, 2*scrollStep)
-	}
-	m, _ = step(t, m, key("down"))
-	if m.scroll.Offset != scrollStep {
-		t.Fatalf("↓: Offset=%d want %d", m.scroll.Offset, scrollStep)
-	}
-	m, _ = step(t, m, key("down"))
-	m, _ = step(t, m, key("down"))
-	if m.scroll.Offset != 0 || !m.scroll.AtTail() {
-		t.Fatalf("↓ past tail: Offset=%d want 0", m.scroll.Offset)
-	}
-}
-
-// TestKeyScroll_ArrowsWithDraftDoNotScroll verifies plain ↑/↓ go to the composer
-// (not the stream) once there's a draft, so editing isn't hijacked by scrolling.
-func TestKeyScroll_ArrowsWithDraftDoNotScroll(t *testing.T) {
-	m := longSessionModel(t)
-	m.input.SetValue("a draft")
-	m, _ = step(t, m, key("up"))
-	if m.scroll.Offset != 0 {
-		t.Fatalf("↑ with a draft scrolled the stream: Offset=%d want 0", m.scroll.Offset)
-	}
-}
-
-// TestKeyScroll_PageKeys verifies pgup/pgdn page the stream regardless of the
-// composer state.
-func TestKeyScroll_PageKeys(t *testing.T) {
-	m := longSessionModel(t)
-	m.input.SetValue("draft present")
 	m, _ = step(t, m, key("pgup"))
-	if m.scroll.Offset <= 0 {
-		t.Fatalf("pgup did not scroll back: Offset=%d", m.scroll.Offset)
+	m, _ = step(t, m, key("ctrl+up"))
+	if m.scroll.Offset != 2*scrollStep {
+		t.Fatalf("pgup+ctrl+up: Offset=%d want %d", m.scroll.Offset, 2*scrollStep)
 	}
 	m, _ = step(t, m, key("pgdown"))
-	if !m.scroll.AtTail() {
-		t.Fatalf("pgdown did not return to tail: Offset=%d", m.scroll.Offset)
+	if m.scroll.Offset != scrollStep {
+		t.Fatalf("pgdown: Offset=%d want %d", m.scroll.Offset, scrollStep)
+	}
+	m, _ = step(t, m, key("ctrl+down"))
+	m, _ = step(t, m, key("ctrl+down"))
+	if m.scroll.Offset != 0 || !m.scroll.AtTail() {
+		t.Fatalf("ctrl+down past tail: Offset=%d want 0", m.scroll.Offset)
+	}
+}
+
+// TestKeyScroll_PlainArrowsAreInputBoxOnly pins the constraint that the input box
+// is untouched: plain ↑/↓ drive history recall / the composer, never the stream
+// scroll.
+func TestKeyScroll_PlainArrowsAreInputBoxOnly(t *testing.T) {
+	m := longSessionModel(t)
+	m.history = []string{"earlier prompt"}
+	m.histIdx = -1
+	m, _ = step(t, m, key("up"))
+	if m.scroll.Offset != 0 {
+		t.Fatalf("plain ↑ scrolled the stream: Offset=%d want 0 (input box only)", m.scroll.Offset)
+	}
+	if m.input.Value() != "earlier prompt" {
+		t.Fatalf("plain ↑ did not recall history: got %q", m.input.Value())
 	}
 }

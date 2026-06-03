@@ -1,12 +1,13 @@
 package dev.forge.feature.chat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,32 +32,34 @@ fun StatusStrip(
     provider: String?,
     tokens: TokenUsage?,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier
             .fillMaxWidth()
             .height(32.dp)
             .background(Surface)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp),
     ) {
         // mode chip — blue fill, 700, 4dp radius
         Text(
             text = (mode ?: "build").replaceFirstChar { it.uppercase() },
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = OnPrimary,
             modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
+                .clip(ForgeShapes.xs)
                 .background(Primary)
                 .padding(horizontal = 8.dp, vertical = 1.dp),
         )
         if (model != null) {
             Text(
                 text = model,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 12.sp,
                 color = OnSurface,
                 maxLines = 1,
@@ -65,27 +68,26 @@ fun StatusStrip(
             )
         }
         if (provider != null) {
-            Text("·", fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = OnSurfaceGhost)
+            Text("·", fontFamily = ForgeMono, fontSize = 12.sp, color = OnSurfaceGhost)
             Text(
                 text = provider.replaceFirstChar { it.uppercase() },
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 12.sp,
                 color = OnSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // push the token count to the right edge (mock's margin-left:auto)
+        Spacer(Modifier.weight(1f))
         tokens?.let {
             val total = it.input + it.output + it.reasoning + it.cache.read + it.cache.write
             if (total > 0) {
                 Text(
                     text = formatTokenCount(total),
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 12.sp,
                     color = OnSurfaceFaint,
-                    modifier = Modifier
-                        .weight(1f)
-                        .wrapContentWidth(Alignment.End),
                 )
             }
         }
@@ -94,7 +96,7 @@ fun StatusStrip(
 
 /** Formats a token total compactly: 1234 → "1.2K", 2_400_000 → "2.4M". */
 internal fun formatTokenCount(count: Double): String = when {
-    count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000)
-    count >= 1_000 -> String.format("%.1fK", count / 1_000)
+    count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", count / 1_000_000)
+    count >= 1_000 -> String.format(java.util.Locale.US, "%.1fK", count / 1_000)
     else -> count.toInt().toString()
 }

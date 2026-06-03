@@ -70,9 +70,9 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .padding(horizontal = 14.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(ForgeShapes.sm)
             .background(SurfaceContainer)
-            .border(1.dp, OutlineVariant, RoundedCornerShape(8.dp)),
+            .border(1.dp, OutlineVariant, ForgeShapes.sm),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -99,18 +99,18 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
                         withStyle(SpanStyle(color = Tertiary)) { append(filename ?: "file") }
                     }
                 },
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             if (isError) {
-                Text("error", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Error)
+                Text("error", fontFamily = ForgeMono, fontSize = 11.sp, color = Error)
             } else if (lineCount != null) {
                 Text(
                     text = if (lineCount == 1) "1 line" else "$lineCount lines",
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 11.sp,
                     color = OnSurfaceFaint,
                 )
@@ -127,7 +127,7 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
             ) {
                 Text(
                     text = body,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     color = if (isError) Error else OnSurfaceVariant,

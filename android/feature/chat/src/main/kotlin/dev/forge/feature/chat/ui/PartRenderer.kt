@@ -74,12 +74,12 @@ private fun ReasoningPartView(part: ReasoningPart, modifier: Modifier = Modifier
     // full reasoning. No chevron — the line itself is the affordance.
     Text(
         text = buildAnnotatedString {
-            withStyle(SpanStyle(color = Secondary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)) {
-                append("+ Thought")
+            withStyle(SpanStyle(color = Secondary, fontFamily = ForgeMono)) {
+                append(if (duration != null) "+ Thought:" else "+ Thought")
             }
             duration?.let {
-                withStyle(SpanStyle(color = Secondary, fontFamily = FontFamily.Monospace)) { append(": ") }
-                withStyle(SpanStyle(color = OnSurfaceFaint, fontFamily = FontFamily.Monospace)) { append(it) }
+                append(" ")
+                withStyle(SpanStyle(color = OnSurfaceFaint, fontFamily = ForgeMono)) { append(it) }
             }
         },
         fontSize = 13.sp,
@@ -122,9 +122,9 @@ private fun PatchPartView(
     Column(
         modifier = modifier
             .padding(horizontal = 14.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(ForgeShapes.sm)
             .background(SurfaceContainer)
-            .border(1.dp, OutlineVariant, RoundedCornerShape(8.dp)),
+            .border(1.dp, OutlineVariant, ForgeShapes.sm),
     ) {
         // Header — when active (expanded), the TUI amber rail: a 2dp amber
         // inset-start bar over a faint amber tint (design §2).
@@ -145,7 +145,7 @@ private fun PatchPartView(
                     },
                 )
                 .clickable { expanded = !expanded }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp), // centered in 46dp, no vertical pad (mock)
         ) {
             Icon(
                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -153,7 +153,7 @@ private fun PatchPartView(
                 tint = if (expanded) Secondary else OnSurfaceVariant,
                 modifier = Modifier.size(16.dp),
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
                 text = buildAnnotatedString {
                     withStyle(SpanStyle(color = OnSurface)) { append("Edit ") }
@@ -161,7 +161,7 @@ private fun PatchPartView(
                         append(if (fileCount == 1) part.files.first().substringAfterLast('/') else "$fileCount files")
                     }
                 },
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -174,13 +174,13 @@ private fun PatchPartView(
                         append(" ")
                         withStyle(SpanStyle(color = Error)) { append("−$deletions") }
                     },
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 12.5.sp,
                 )
             } else {
                 Text(
                     text = part.hash.take(7),
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 11.sp,
                     color = OnSurfaceFaint,
                 )
@@ -209,7 +209,7 @@ private fun PatchPartView(
                         Spacer(Modifier.width(6.dp))
                         Text(
                             text = file,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = ForgeMono,
                             fontSize = 12.sp,
                             color = OnSurfaceVariant,
                             maxLines = 1,
@@ -228,43 +228,55 @@ private val DiffAddBg = Color(0x228CC265)
 private val DiffRemoveBg = Color(0x22E0606E)
 private val DiffHunkBg = Color(0x1AB08CD4)
 
+/** Cap on rendered diff lines — these render eagerly (no nested LazyColumn is
+ *  possible inside the scrolling stream), so a huge snapshot would ANR. */
+private const val MAX_DIFF_LINES = 400
+
+/** Git/patch metadata lines the design's clean unified diff omits (it starts at
+ *  `--- file`). We keep only `---`/`+++`/`@@`/content rows. */
+private fun isDiffNoise(line: String): Boolean =
+    line.startsWith("diff --git") || line.startsWith("index ") ||
+        line.startsWith("Index:") || line.startsWith("===") ||
+        line.startsWith("new file mode") || line.startsWith("deleted file mode") ||
+        line.startsWith("old mode") || line.startsWith("new mode") ||
+        line.startsWith("similarity index") || line.startsWith("rename ") ||
+        line.startsWith("copy ") || line.startsWith("\\ No newline")
+
 @Composable
 fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier) {
+    // Strip git-diff cruft so the body reads like the design's unified diff.
+    val perFile = diffs.map { it.patch?.lines().orEmpty().filterNot(::isDiffNoise) }
+    val totalLines = perFile.sumOf { it.size }
+    var budget = MAX_DIFF_LINES
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(SurfaceContainerLowest),
     ) {
-        diffs.forEach { diff ->
-            // File header — redundant for a single-file card (the card header
-            // already names it), so only shown when several files are bundled.
-            if (diffs.size > 1) {
-                Text(
-                    text = diff.file ?: "",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = OnSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(SurfaceContainerHigh)
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                )
-            }
-            // Patch lines — design DiffRow grammar: a 1-char gutter sign column
-            // (colored) + body text in onSurface; whole-line tint for add/del,
-            // purple hunks, red/cyan ---/+++ headers (design §2).
-            val patch = diff.patch
-            if (!patch.isNullOrEmpty()) {
-                val scrollState = rememberScrollState()
-                Box(modifier = Modifier.horizontalScroll(scrollState)) {
-                    // IntrinsicSize.Max → all rows share the widest line's width,
-                    // so add/del tints span the full row (design DiffRow look).
-                    Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = 6.dp)) {
-                        patch.lines().forEach { line -> DiffLine(line) }
-                    }
+        perFile.forEach { lines ->
+            if (budget <= 0 || lines.isEmpty()) return@forEach
+            // Design DiffRow grammar: a 1-char gutter sign column (colored) + body
+            // in onSurface; whole-line tint for add/del, purple hunks, red/cyan
+            // ---/+++ headers (which name the file — no separate header bar). §2
+            val shown = lines.take(budget)
+            budget -= shown.size
+            val scrollState = rememberScrollState()
+            Box(modifier = Modifier.horizontalScroll(scrollState)) {
+                // IntrinsicSize.Max → all rows share the widest line's width,
+                // so add/del tints span the full row (design DiffRow look).
+                Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = 8.dp)) {
+                    shown.forEach { line -> DiffLine(line) }
                 }
             }
+        }
+        if (totalLines > MAX_DIFF_LINES) {
+            Text(
+                text = "… ${totalLines - MAX_DIFF_LINES} more lines",
+                fontFamily = ForgeMono,
+                fontSize = 12.sp,
+                color = OnSurfaceFaint,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
     }
 }
@@ -283,20 +295,32 @@ private fun DiffLine(line: String) {
         line.startsWith("-") -> Spec(DiffRemoveBg, "−", Error, OnSurface, line.drop(1))
         else -> Spec(Color.Transparent, " ", Color.Transparent, OnSurfaceVariant, line.removePrefix(" "))
     }
-    Text(
-        text = buildAnnotatedString {
-            if (s.sign.isNotEmpty()) withStyle(SpanStyle(color = s.signColor)) { append(s.sign) }
-            withStyle(SpanStyle(color = s.text)) { append(s.body.ifEmpty { " " }) }
-        },
-        fontFamily = FontFamily.Monospace,
-        fontSize = 12.sp,
-        lineHeight = 20.sp,
-        softWrap = false,
+    // Fixed 1ch gutter sign column + body (mock DiffRow), so body text aligns
+    // across context/add/del/hunk/header rows regardless of the sign.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(s.bg)
             .padding(horizontal = 8.dp),
-    )
+    ) {
+        Text(
+            text = s.sign,
+            fontFamily = ForgeMono,
+            fontSize = 12.sp,
+            lineHeight = 20.sp,
+            color = s.signColor,
+            softWrap = false,
+            modifier = Modifier.width(8.dp), // ≈1ch at 12sp mono
+        )
+        Text(
+            text = s.body.ifEmpty { " " },
+            fontFamily = ForgeMono,
+            fontSize = 12.sp,
+            lineHeight = 20.sp,
+            color = s.text,
+            softWrap = false,
+        )
+    }
 }
 
 // ─── File ─────────────────────────────────────────────────────────────────────
@@ -308,7 +332,7 @@ private fun FilePartView(part: FilePart, modifier: Modifier = Modifier) {
         label = {
             Text(
                 text = part.filename ?: part.url,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 12.sp,
                 maxLines = 1,
             )

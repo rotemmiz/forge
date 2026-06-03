@@ -8,16 +8,23 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.forge.core.model.Message
+import dev.forge.core.model.ModelRef
 import dev.forge.core.model.Part
 import dev.forge.core.model.SnapshotFileDiff
 import dev.forge.core.store.OptimisticMessage
@@ -45,6 +53,10 @@ fun ChatScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val commands by viewModel.commands.collectAsStateWithLifecycle()
+    val providers by viewModel.providers.collectAsStateWithLifecycle()
+    val agents by viewModel.agents.collectAsStateWithLifecycle()
+    val selectedModel by viewModel.selectedModel.collectAsStateWithLifecycle()
+    val selectedAgent by viewModel.selectedAgent.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
     // Only auto-scroll if the user is already near the bottom
@@ -69,6 +81,20 @@ fun ChatScreen(
     val sessionDirectory = uiState.session?.directory
     var showInfoSheet by remember { mutableStateOf(false) }
     var showOverflow by remember { mutableStateOf(false) }
+    var showModelPicker by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+
+    // The strip shows the user's explicit pick if any, else the last-run state from the stream.
+    val displayAgent = selectedAgent ?: uiState.agentMode
+    val displayModelRef = selectedModel ?: run {
+        val p = uiState.providerID
+        val m = uiState.modelID
+        if (p != null && m != null) ModelRef(providerID = p, modelID = m) else null
+    }
+    val displayModel = displayModelRef?.modelID
+    val displayProvider = displayModelRef?.providerID
 
     Scaffold(
         containerColor = Surface,
@@ -124,7 +150,7 @@ fun ChatScreen(
                         uiState.session?.directory?.let { dir ->
                             Text(
                                 text = dir,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = ForgeMono,
                                 fontSize = 11.5.sp,
                                 color = OnSurfaceFaint,
                                 maxLines = 1,
@@ -143,9 +169,22 @@ fun ChatScreen(
                             expanded = showOverflow,
                             onDismiss = { showOverflow = false },
                             isDarkTheme = isDarkTheme,
+                            isShared = uiState.session?.share != null,
+                            onRename = {
+                                showOverflow = false
+                                showRenameDialog = true
+                            },
                             onFork = {
                                 showOverflow = false
                                 viewModel.forkSession { newId -> onNavigateToSession(newId) }
+                            },
+                            onSummarize = {
+                                showOverflow = false
+                                viewModel.summarize()
+                            },
+                            onShare = {
+                                showOverflow = false
+                                showShareDialog = true
                             },
                             onDelete = {
                                 showOverflow = false
@@ -172,15 +211,20 @@ fun ChatScreen(
             ) {
                 HorizontalDivider(color = Hairline)
                 StatusStrip(
-                    mode = uiState.agentMode,
-                    model = uiState.modelID,
-                    provider = uiState.providerID,
+                    mode = displayAgent,
+                    model = displayModel,
+                    provider = displayProvider,
                     tokens = uiState.session?.tokens,
+                    onClick = if (providers.isNotEmpty() || agents.isNotEmpty()) {
+                        { showModelPicker = true }
+                    } else null,
                 )
                 HorizontalDivider(color = Hairline)
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
                     enabled = pendingPermission == null && pendingQuestion == null,
+                    busy = uiState.sessionStatus == "busy",
+                    onStop = { viewModel.abort() },
                     commands = commands,
                     onSearchFiles = { query -> viewModel.searchFiles(query) },
                     onRunCommand = { name, args -> viewModel.runCommand(name, args) },
@@ -247,6 +291,48 @@ fun ChatScreen(
                 SessionInfoSheet(session = session, onDismiss = { showInfoSheet = false })
             }
         }
+
+        if (showRenameDialog) {
+            RenameSessionDialog(
+                current = uiState.session?.title,
+                onConfirm = { title ->
+                    viewModel.renameSession(title)
+                    showRenameDialog = false
+                },
+                onDismiss = { showRenameDialog = false },
+            )
+        }
+
+        if (showShareDialog) {
+            ShareSessionDialog(
+                url = uiState.session?.share?.url,
+                onShare = { viewModel.shareSession() },
+                onUnshare = {
+                    viewModel.unshareSession()
+                    showShareDialog = false
+                },
+                onCopy = { url -> clipboard.setText(AnnotatedString(url)) },
+                onDismiss = { showShareDialog = false },
+            )
+        }
+
+        if (showModelPicker) {
+            ModelPickerSheet(
+                providers = providers,
+                agents = agents,
+                selectedModel = displayModelRef,
+                selectedAgent = displayAgent,
+                onSelectModel = { ref ->
+                    viewModel.selectModel(ref)
+                    showModelPicker = false
+                },
+                onSelectAgent = { name ->
+                    viewModel.selectAgent(name)
+                    showModelPicker = false
+                },
+                onDismiss = { showModelPicker = false },
+            )
+        }
     }
 }
 
@@ -255,7 +341,11 @@ private fun OverflowMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     isDarkTheme: Boolean,
+    isShared: Boolean,
+    onRename: () -> Unit,
     onFork: () -> Unit,
+    onSummarize: () -> Unit,
+    onShare: () -> Unit,
     onDelete: () -> Unit,
     onToggleTheme: () -> Unit,
 ) {
@@ -265,9 +355,24 @@ private fun OverflowMenu(
         containerColor = SurfaceContainerHigh,
     ) {
         DropdownMenuItem(
+            text = { Text("Rename session", color = OnSurface) },
+            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = OnSurfaceVariant) },
+            onClick = onRename,
+        )
+        DropdownMenuItem(
             text = { Text("Fork session", color = OnSurface) },
             leadingIcon = { Icon(Icons.Default.CallSplit, contentDescription = null, tint = OnSurfaceVariant) },
             onClick = onFork,
+        )
+        DropdownMenuItem(
+            text = { Text("Summarize context", color = OnSurface) },
+            leadingIcon = { Icon(Icons.Default.Compress, contentDescription = null, tint = OnSurfaceVariant) },
+            onClick = onSummarize,
+        )
+        DropdownMenuItem(
+            text = { Text(if (isShared) "Sharing… (manage)" else "Share session", color = OnSurface) },
+            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = OnSurfaceVariant) },
+            onClick = onShare,
         )
         DropdownMenuItem(
             text = { Text(if (isDarkTheme) "Light theme" else "Dark theme", color = OnSurface) },
@@ -315,7 +420,7 @@ private fun CompactionMarker() {
         HorizontalDivider(color = Hairline, modifier = Modifier.weight(1f))
         Text(
             text = "context summarized",
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 11.sp,
             color = HeaderPurple,
             modifier = Modifier.padding(horizontal = 10.dp),
@@ -341,12 +446,15 @@ private fun UserMessageBlock(
     parts: List<Part>,
     diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
 ) {
-    Row(modifier = Modifier.fillMaxWidth()) {
-        // 2dp primary blue left accent bar
-        Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(Primary))
-        Column(modifier = Modifier.padding(start = 13.dp, end = 14.dp)) {
-            StreamParts(parts, diffs)
-        }
+    // 2dp primary left accent rail drawn relative to the measured height.
+    val rail = Primary
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind { drawRect(rail, size = Size(2.dp.toPx(), size.height)) }
+            .padding(start = 13.dp, end = 14.dp),
+    ) {
+        StreamParts(parts, diffs)
     }
 }
 
@@ -362,19 +470,23 @@ private fun AssistantMessageBlock(
 
 @Composable
 private fun OptimisticMessageBlock(opt: OptimisticMessage) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Box(modifier = Modifier.width(2.dp).fillMaxHeight().background(Primary))
-        Column(modifier = Modifier.padding(start = 13.dp, end = 14.dp)) {
-            Text(
-                text = opt.text,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5.sp),
-                color = OnSurface.copy(alpha = 0.6f),
-            )
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(1.dp),
-                color = Primary,
-                trackColor = Hairline,
-            )
-        }
+    val rail = Primary
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .drawBehind { drawRect(rail, size = Size(2.dp.toPx(), size.height)) }
+            .padding(start = 13.dp, end = 14.dp),
+    ) {
+        Text(
+            text = opt.text,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5.sp),
+            color = OnSurface.copy(alpha = 0.6f),
+        )
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(1.dp),
+            color = Primary,
+            trackColor = Hairline,
+        )
     }
 }

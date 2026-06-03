@@ -16,10 +16,17 @@ import (
 // Session is a session list entry.
 type Session struct {
 	ID        string        `json:"id"`
+	ParentID  string        `json:"parentID,omitempty"` // set on sub-agent child sessions
 	Title     string        `json:"title"`
 	Directory string        `json:"directory"`
 	Cost      float64       `json:"cost"`
 	Tokens    SessionTokens `json:"tokens"`
+	Share     *SessionShare `json:"share,omitempty"`
+}
+
+// SessionShare carries a published share link (session.share.url).
+type SessionShare struct {
+	URL string `json:"url"`
 }
 
 // SessionTokens is the running token accounting carried on a session.

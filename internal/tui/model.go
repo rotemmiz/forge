@@ -6,9 +6,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -49,6 +51,7 @@ type Config struct {
 	Password  string
 	Provider  string // prompt model provider id (else resolved from /config)
 	Model     string // prompt model id
+	Theme     string // override theme name (empty = auto-pick or KV-pinned; for deterministic capture)
 }
 
 // Model is the Bubble Tea application state.
@@ -76,14 +79,18 @@ type Model struct {
 	store store
 
 	// Composer.
-	input textarea.Model
-	model promptModel
+	input     textarea.Model
+	model     promptModel
+	shellMode bool // composer is in `!` shell mode (submit → POST /session/{id}/shell)
 
 	// Command overlay.
 	modal        modalKind
 	modalSel     int
-	permSel      int  // selected choice in the permission overlay
-	permReplying bool // a permission reply is in flight (overlay stays up until it resolves)
+	renameInput  textinput.Model // text-input overlay (rename current session)
+	mcpServers   []mcpItem       // read-only MCP list (GET /mcp)
+	skills       []skillItem     // read-only skills list (GET /skill)
+	permSel      int             // selected choice in the permission overlay
+	permReplying bool            // a permission reply is in flight (overlay stays up until it resolves)
 
 	// Question overlay (steps through a request's questions).
 	qIdx      int        // current question index
@@ -100,14 +107,68 @@ type Model struct {
 	ac       autocomplete // composer "/" popup state
 
 	// Chrome.
-	agent         string      // active agent (status bar "mode"); empty → default
-	agents        []agentItem // selectable agents (GET /agent)
-	themeName     string      // active theme name (theme switcher)
-	sidebarHidden bool        // right sidebar visibility (toggle: ctrl+x b)
-	streamWidth   int         // transient: stream column width when the sidebar is shown
-	leader        bool        // ctrl+x leader pressed, awaiting the chord key
-	tasksOpen     bool        // tasks dock visibility (toggle: ctrl+x t)
-	todos         []Todo      // current session's todos (tasks dock)
+	agent          string      // active agent (status bar "mode"); empty → default
+	agents         []agentItem // selectable agents (GET /agent)
+	themeName      string      // active theme name (theme switcher)
+	sidebarHidden  bool        // right sidebar visibility (toggle: ctrl+x b)
+	streamWidth    int         // transient: stream column width when the sidebar is shown
+	leader         bool        // ctrl+x leader pressed, awaiting the chord key
+	tasksOpen      bool        // tasks dock visibility (toggle: ctrl+x t)
+	todos          []Todo      // current session's todos (tasks dock)
+	scrollOffset   int         // stream scrollback: lines hidden below the viewport (0 = live tail)
+	view           viewState   // display toggles (timestamps, tool output, thinking)
+	history        []string    // submitted prompts (persisted; recalled with up/down when empty)
+	histIdx        int         // browse cursor into history (-1 = not browsing)
+	persistEnabled bool        // gate local-KV reads/writes (off in tests; on via Restore)
+
+	// Diff reviewer (plan 08b §1).
+	diff           diffState // full-screen diff reviewer (open == active)
+	diffTreeHidden bool      // persisted: file-tree pane preference
+
+	// PTY pane (plan 08b §2).
+	pty    ptyState // embedded terminal split (open == visible)
+	ptyGen int      // monotonic pane-open counter (stamps async PTY msgs)
+
+	// Stashed prompt drafts (plan 08b §6; persisted).
+	stash []string
+
+	// termDark records whether the terminal reported a dark background at
+	// startup (lipgloss.HasDarkBackground()).  Stored so that applyThemeByName
+	// can resolve embedded opencode themes for the correct dark/light variant
+	// when the user changes theme mid-session (mirrors opencode's theme_mode_lock
+	// + dark/light token resolution — context/theme.tsx resolveTheme).
+	termDark bool
+
+	// mdCache is the rendered-markdown cache for renderMarkdown (markdown.go).
+	// Key: (SHA-256 of text, content width, theme name).  Invalidated naturally
+	// by the theme name component: a theme switch produces cache misses and new
+	// entries for the new theme; old entries become unreachable and are GC'd.
+	mdCache mdCache
+
+	// animFrame is the monotonic animation frame counter incremented on each
+	// animTickMsg.  Passed to scannerFrame() and (later) logo shimmer.
+	// Reset to 0 when a new session opens so the sweep always starts from the left.
+	// (plan 08c M9 — spinner.go)
+	animFrame int
+
+	// toasts is the live toast queue (plan 08c M11).  Entries expire after
+	// toastTTL; the animTick drives TTL countdown via toastTick().
+	// pushToast enqueues and toastTick purges; overlayToasts composites the
+	// stack onto the rendered frame bottom-right.
+	toasts []toast
+}
+
+// pickDefaultTheme returns the appropriate default theme name based on whether
+// the terminal has a dark background. This mirrors opencode's theme_mode_lock
+// (kv.json) + dark/light token resolution (context/theme.tsx): on a dark
+// terminal forge-dark fits; on a light/white terminal forge-light is chosen so
+// foreground colors remain legible without imposing a dark fill.
+// The darkBg param lets tests inject a value instead of reading the real terminal.
+func pickDefaultTheme(darkBg bool) string {
+	if darkBg {
+		return "forge-dark"
+	}
+	return "forge-light"
 }
 
 // New builds the initial Model, constructing the SDK client.
@@ -125,19 +186,32 @@ func New(cfg Config) Model {
 	ta.FocusedStyle.Base = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	ta.Focus()
+	ri := textinput.New()
+	ri.Placeholder = "Session title"
+	ri.CharLimit = 200
 	m := Model{
-		cfg:    cfg,
-		screen: ScreenSplash,
-		conn:   Connecting,
-		status: "connecting to " + cfg.URL,
-		ctx:    ctx,
-		cancel: cancel,
-		store:  newStore(),
-		input:  ta,
-		model:  promptModel{Provider: cfg.Provider, Model: cfg.Model},
+		cfg:         cfg,
+		screen:      ScreenSplash,
+		conn:        Connecting,
+		status:      "connecting to " + cfg.URL,
+		ctx:         ctx,
+		cancel:      cancel,
+		store:       newStore(),
+		input:       ta,
+		renameInput: ri,
+		model:       promptModel{Provider: cfg.Provider, Model: cfg.Model},
 	}
-	def := theme.Palettes()[0] // forge-dark; keeps themeName + styles + composer in sync
-	m = m.applyTheme(def.Name, def.Palette)
+	// Auto-pick light vs dark by terminal background — mirrors opencode's
+	// theme_mode_lock behaviour. Restore() will override with any pinned KV theme.
+	// cfg.Theme (--theme flag) wins over both auto-pick and KV.
+	m.termDark = lipgloss.HasDarkBackground()
+	defName := pickDefaultTheme(m.termDark)
+	if cfg.Theme != "" {
+		defName = cfg.Theme
+	}
+	def, _ := theme.ByNameForMode(defName, m.termDark)
+	m = m.applyTheme(defName, def)
+	m.histIdx = -1
 	c, err := forgeclient.New(cfg.URL, forgeclient.Options{
 		Directory: cfg.Directory, Username: cfg.Username, Password: cfg.Password,
 	})
@@ -146,6 +220,9 @@ func New(cfg Config) Model {
 		return m
 	}
 	m.client = c
+	// Ensure the markdown render cache is allocated so all Model copies
+	// derived from this root share a non-nil map (maps are reference types).
+	m.ensureMDCache()
 	return m
 }
 
@@ -156,10 +233,61 @@ func New(cfg Config) Model {
 func (m Model) applyTheme(name string, p theme.Palette) Model {
 	m.themeName = name
 	m.styles = theme.New(p)
-	txt := lipgloss.NewStyle().Foreground(p.Fg)
-	ph := lipgloss.NewStyle().Foreground(p.FgGhost)
+	txt := lipgloss.NewStyle().Foreground(p.Fg).Background(p.Bg)
+	ph := lipgloss.NewStyle().Foreground(p.FgGhost).Background(p.Bg)
 	m.input.FocusedStyle.Text, m.input.FocusedStyle.Placeholder = txt, ph
 	m.input.BlurredStyle.Text, m.input.BlurredStyle.Placeholder = txt, ph
+	// The textarea pads its current/empty line with CursorLine + Base styles; pin
+	// their Bg too so the composer row fills with the theme background rather than
+	// the terminal default (visible as a dark bar on a light terminal). plan 08c Tier 0.
+	bg := lipgloss.NewStyle().Background(p.Bg)
+	m.input.FocusedStyle.CursorLine, m.input.FocusedStyle.Base = bg, bg
+	m.input.BlurredStyle.CursorLine, m.input.BlurredStyle.Base = bg, bg
+	m.input.FocusedStyle.EndOfBuffer, m.input.BlurredStyle.EndOfBuffer = bg, bg
+	// bubbles' textarea caches an internal *Style pointer (set only by Focus/Blur)
+	// to the active style; after this value-copy of Model that pointer still aims at
+	// the pre-copy FocusedStyle, so our edits above wouldn't take effect on render.
+	// Re-point it to the copy's style by re-applying the current focus state.
+	if m.input.Focused() {
+		_ = m.input.Focus()
+	} else {
+		m.input.Blur()
+	}
+	return m
+}
+
+// Restore loads the persisted theme/model/history from the local KV and turns on
+// persistence. Call once from the real entrypoint (not in tests, which want a
+// hermetic New). CLI --provider/--model/--theme still win.
+// Theme resolution order: cfg.Theme (CLI --theme) > pinned KV theme > auto-pick by terminal background.
+func (m Model) Restore() Model {
+	m.persistEnabled = true
+	kv := loadKV()
+	m.history, m.histIdx = kv.History, -1
+	m.stash = kv.Stash
+	m.diffTreeHidden = kv.HideDiffTree
+	if m.cfg.Theme != "" {
+		// CLI --theme flag takes highest priority — deterministic capture / testing.
+		m = m.applyThemeByName(m.cfg.Theme)
+	} else if kv.Theme != "" {
+		// User explicitly pinned a theme — honour it (mirrors opencode's theme_mode_lock).
+		m = m.applyThemeByName(kv.Theme)
+	}
+	// If no pinned theme the auto-pick applied in New() already selected the right
+	// default; nothing further needed here.
+	if !m.model.ok() && kv.Provider != "" && kv.Model != "" {
+		m.model = promptModel{Provider: kv.Provider, Model: kv.Model, Variant: kv.Variant}
+	}
+	return m
+}
+
+// applyThemeByName switches to a palette by name (no-op if unknown).
+// Resolves the palette for the terminal's dark/light mode (m.termDark) so that
+// embedded opencode themes use the correct dark or light token variant.
+func (m Model) applyThemeByName(name string) Model {
+	if p, ok := theme.ByNameForMode(name, m.termDark); ok {
+		return m.applyTheme(name, p)
+	}
 	return m
 }
 
@@ -168,7 +296,11 @@ func (m Model) Init() tea.Cmd {
 	if m.client == nil {
 		return nil
 	}
-	return healthCmd(m.ctx, m.client)
+	// Kick the animation tick immediately: the splash screen is the initial state,
+	// and the logo shimmer needs to start running right away (plan 08c M10).
+	// maybeKickAnim() returns animTickCmd() because animating() is true on
+	// ScreenSplash.  The health check and tick run concurrently.
+	return tea.Batch(healthCmd(m.ctx, m.client), m.maybeKickAnim())
 }
 
 // Update handles messages.
@@ -188,9 +320,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m = m.resizeComposer()
+		if cmd := m.resizePTY(); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case tea.KeyMsg:
+		// A focused terminal captures every key (ctrl+c included, so the shell can
+		// interrupt) — only ctrl+] escapes, handled inside handlePTYKey. A pending
+		// permission/question prompt still takes precedence (so it can be answered);
+		// focus returns to the shell once the prompt resolves.
+		if m.pty.open && m.pty.focused && m.pendingPermission() == nil && m.pendingQuestion() == nil {
+			return m.handlePTYKey(msg)
+		}
+		// An open-but-unfocused terminal: ctrl+] closes it.
+		if m.pty.open && msg.String() == "ctrl+]" {
+			m.closePTY()
+			return m, nil
+		}
 		// ctrl+c always quits.
 		if msg.String() == "ctrl+c" {
 			if m.stream != nil {
@@ -209,6 +356,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingQuestion() != nil {
 			return m.handleQuestionKey(msg)
 		}
+		// The full-screen diff reviewer captures all navigation keys.
+		if m.diff.open {
+			return m.handleDiffKey(msg)
+		}
 		// A modal captures navigation/selection keys.
 		if m.modal != modalNone {
 			return m.handleModalKey(msg)
@@ -220,7 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "ctrl+x" {
 			m.leader = true
-			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks"
+			m.status = "ctrl+x — l sessions · n new · m model · a agent · g timeline · s status · b sidebar · t tasks · y copy · r thinking · f fold thought · o tools · v fold tool · e editor · d diff · ` terminal · w stash · ↓ child · ↑ parent · [ ] siblings"
 			return m, nil
 		}
 		// The slash popup captures nav/accept/dismiss keys; other keys fall
@@ -234,10 +385,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+p":
 			m.modal, m.modalSel = modalPalette, 0
 			return m, nil
+		case "ctrl+t":
+			return m.cycleVariant(), nil // cycle model variants (opencode variant_cycle)
+		case "ctrl+up", "pgup":
+			m.scrollOffset += scrollStep
+			return m, nil
+		case "ctrl+down", "pgdown", "pgdn":
+			m.scrollOffset -= scrollStep
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
+			return m, nil
+		case "up":
+			if nm, ok := m.historyRecall(-1); ok {
+				return nm, nil
+			}
+		case "down":
+			if nm, ok := m.historyRecall(+1); ok {
+				return nm, nil
+			}
+		case "!":
+			// `!` at the start of an empty composer enters shell mode (opencode
+			// prompt-input.tsx:1160); a real "!" mid-text falls through to typing.
+			if !m.shellMode && strings.TrimSpace(m.input.Value()) == "" {
+				m.shellMode = true
+				return m, nil
+			}
+		case "esc":
+			if m.shellMode {
+				m.shellMode = false
+				return m, nil
+			}
 		case "enter":
 			return m.submit()
 		}
 		// Everything else goes to the composer (shift+enter / ctrl+j add a newline).
+		m.histIdx = -1 // editing exits history browse
 		var cmd, acCmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m = m.resizeComposer()             // auto-grow to fit the new content
@@ -255,6 +438,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.store.sessions = upsertSession(m.store.sessions, msg.session)
 		m.cfg.SessionID, m.screen, m.modal = msg.session.ID, ScreenSession, modalNone
+		// Reset animation frame so the sweep starts from the left in the new session.
+		m.animFrame = 0
 		return m, nil
 
 	case sessionDeletedMsg:
@@ -276,6 +461,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
 			}
 			m.cfg.SessionID, m.screen = "", ScreenSplash
+			// Re-entering the splash — kick the logo shimmer tick (plan 08c M10).
+			return m, m.maybeKickAnim()
 		}
 		return m, nil
 
@@ -363,6 +550,118 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case renamedMsg:
+		if msg.err != nil {
+			m.status = "rename failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID != "" {
+			m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		}
+		m.status = "renamed"
+		return m, nil
+
+	case sharedMsg:
+		if msg.err != nil {
+			m.status = "share failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID != "" {
+			m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		}
+		if msg.shared {
+			if sh := msg.session.Share; sh != nil && sh.URL != "" {
+				m.status = "shared · " + sh.URL + " (copied)"
+				return m, copyClipboardCmd(sh.URL)
+			}
+			m.status = "shared"
+		} else {
+			m.status = "unshared"
+		}
+		return m, nil
+
+	case summarizedMsg:
+		if msg.err != nil {
+			m.status = "summarize failed: " + msg.err.Error()
+		} else {
+			m.status = "summarizing context…"
+		}
+		return m, nil
+
+	case abortedMsg:
+		// Show a toast for interrupt outcomes (plan 08c M11 source #2).
+		// The status line continues to carry the text for accessibility; the toast
+		// is an additional transient notice in the bottom-right corner.
+		if msg.err != nil {
+			m.status = "interrupt failed: " + msg.err.Error()
+			cmd := m.pushToast(toastError, "interrupt failed")
+			return m, cmd
+		}
+		m.status = "interrupted"
+		cmd := m.pushToast(toastInfo, "interrupted")
+		return m, cmd
+
+	case forkedMsg:
+		if msg.err != nil {
+			m.status = "fork failed: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session.ID == "" {
+			m.status = "fork: empty response"
+			return m, nil
+		}
+		m.store.sessions = upsertSession(m.store.sessions, msg.session)
+		m.cfg.SessionID, m.screen = msg.session.ID, ScreenSession
+		m.status = "forked"
+		return m, loadMessagesCmd(m.ctx, m.client, m.cfg.SessionID)
+
+	case mcpLoadedMsg:
+		if msg.err != nil {
+			if m.modal == modalMCP {
+				m.status = "mcp: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.mcpServers = msg.items
+		return m, nil
+
+	case skillsLoadedMsg:
+		if msg.err != nil {
+			if m.modal == modalSkills {
+				m.status = "skills: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.skills = msg.items
+		return m, nil
+
+	case clipboardCopiedMsg:
+		// Show a success toast for every clipboard copy (plan 08c M11 source #1).
+		// The inline m.status text is already set by the caller (e.g. "copied turn"
+		// or "copied last response") — the toast augments rather than replaces it.
+		cmd := m.pushToast(toastSuccess, "copied to clipboard")
+		return m, cmd
+
+	case editorDoneMsg:
+		if msg.path != "" {
+			if b, err := os.ReadFile(msg.path); err == nil {
+				m.input.SetValue(strings.TrimRight(string(b), "\n"))
+				m.input.CursorEnd()
+				m = m.resizeComposer()
+			}
+			_ = os.Remove(msg.path)
+		}
+		if msg.err != nil {
+			m.status = "editor: " + msg.err.Error()
+		}
+		return m, nil
+
+	case shellSentMsg:
+		if msg.err != nil {
+			m.status = "shell failed: " + msg.err.Error()
+		}
+		return m, nil
+
 	case permissionRepliedMsg:
 		m.permReplying = false
 		if msg.err != nil {
@@ -413,10 +712,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.store = m.store.ingestHistory(msg.sessionID, msg.items)
 		}
 		m.todos = nil // todos are per-session; refetch for the opened one if the dock is up
-		if m.tasksOpen && m.cfg.SessionID != "" {
-			return m, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID)
+		cmds := []tea.Cmd{}
+		if msg.sessionID != "" { // keep the sub-agent footer fresh (GET /session/{id}/children)
+			cmds = append(cmds, loadChildrenCmd(m.ctx, m.client, msg.sessionID))
 		}
-		return m, nil
+		if m.tasksOpen && m.cfg.SessionID != "" {
+			cmds = append(cmds, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
+		}
+		return m, tea.Batch(cmds...)
 
 	case connErrMsg:
 		m.conn, m.err = ConnError, msg.err
@@ -446,15 +749,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.resetQuestion()
 		}
 		m.status = fmt.Sprintf("connected · %d events · %d sessions", m.eventCount, len(m.store.sessions))
+		cmds := []tea.Cmd{listenCmd(m.stream)}
+		// Ring the bell when the agent blocks on input — the terminal may be unfocused.
+		if msg.ev.Type == "permission.asked" || msg.ev.Type == "question.asked" {
+			cmds = append(cmds, bellCmd())
+		}
 		// A todowrite tool part changed the todos — refetch (no todo SSE event).
 		if m.tasksOpen && m.cfg.SessionID != "" && isTodoWriteEvent(msg.ev) {
-			return m, tea.Batch(listenCmd(m.stream), loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
+			cmds = append(cmds, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID))
 		}
-		return m, listenCmd(m.stream)
+		// Kick the animation tick when a tool part arrives — the tick will self-sustain
+		// while animating() is true and stop automatically when the turn completes.
+		// maybeKickAnim is a no-op when no animation is needed, so this is safe to call
+		// on every SSE event.  (plan 08c M9 — spinner.go)
+		if kick := m.maybeKickAnim(); kick != nil {
+			cmds = append(cmds, kick)
+		}
+		return m, tea.Batch(cmds...)
 
 	case todosLoadedMsg:
 		if msg.err == nil && msg.sessionID == m.cfg.SessionID {
 			m.todos = msg.todos
+		}
+		return m, nil
+
+	case childrenLoadedMsg:
+		if msg.err == nil {
+			for _, ss := range msg.children {
+				m.store.sessions = upsertSession(m.store.sessions, ss)
+			}
+		}
+		return m, nil
+
+	case diffLoadedMsg:
+		if !m.diff.open { // reviewer was closed while the fetch was in flight
+			return m, nil
+		}
+		m.diff.loading = false
+		if msg.err != nil {
+			m.diff.err = msg.err
+			return m, nil
+		}
+		sortFileDiffs(msg.files)
+		m.diff.files = msg.files
+		m.diff.treeRows = buildDiffTreeRows(msg.files) // cache; rows depend only on files
+		if m.diff.sel >= len(msg.files) {
+			m.diff.sel = 0
+		}
+		return m, nil
+
+	case ptyConnectedMsg:
+		if msg.gen != m.pty.gen { // a dial from a prior (closed) pane — discard
+			msg.conn.Close()
+			return m, nil
+		}
+		m.pty.connecting = false
+		if msg.err != nil {
+			m.pty.err = msg.err
+			return m, nil
+		}
+		m.pty.id, m.pty.conn = msg.id, msg.conn
+		// Reconcile the size: the layout may have changed while dialing (when
+		// id was empty, resizePTY couldn't push it to the daemon yet).
+		return m, tea.Batch(
+			ptyReadCmd(msg.conn, m.pty.gen),
+			resizePTYCmd(m.ctx, m.client, msg.id, m.pty.cols, m.pty.rows),
+		)
+
+	case ptyOutputMsg:
+		if msg.gen != m.pty.gen { // bytes from a stale connection — drop
+			return m, nil
+		}
+		if m.pty.term != nil {
+			_, _ = m.pty.term.Write(msg.data)
+		}
+		if m.pty.conn != nil { // keep pumping while connected
+			return m, ptyReadCmd(m.pty.conn, m.pty.gen)
+		}
+		return m, nil
+
+	case ptyClosedMsg:
+		if msg.gen != m.pty.gen { // close of a prior connection — ignore
+			return m, nil
+		}
+		m.pty.connecting = false
+		m.pty.conn = nil
+		if msg.err != nil {
+			m.pty.err = msg.err
 		}
 		return m, nil
 
@@ -471,12 +852,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case reconnectMsg:
 		return m, openSSECmd(m.ctx, m.client)
+
+	// animTickMsg drives the gradient-scanner spinner and any other per-frame
+	// animation (plan 08c M9).  The tick is gated: it only reschedules while
+	// animating() is true, so the render loop is never woken at idle.
+	//
+	// Pattern:
+	//   animating() == true  → increment frame, return a new tick cmd
+	//   animating() == false → do not reschedule; animation is over
+	//
+	// The tick is started (kicked) by sseEventMsg and sessionOpenedMsg below,
+	// which are the natural entry points for a new assistant turn.
+	case animTickMsg:
+		// Purge expired toasts on every tick (plan 08c M11).  toastTick() drains
+		// the queue in-place; once empty toastsLive() returns false, animating()
+		// may return false (if no tools are running), and the tick self-stops.
+		m.toastTick()
+		if m.animating() {
+			m.animFrame++
+			return m, animTickCmd()
+		}
+		// Not animating — stop; the next animating state will re-kick via maybeKickAnim.
+		return m, nil
 	}
 	return m, nil
 }
 
 // handleModalKey routes keys while a command overlay is open.
 func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The rename overlay is a text input: enter submits, esc cancels, everything
+	// else edits the field.
+	if m.modal == modalRename {
+		switch msg.String() {
+		case "esc":
+			m.modal, m.renameInput = modalNone, blurInput(m.renameInput)
+			return m, nil
+		case "enter":
+			return m.modalSelect()
+		}
+		var cmd tea.Cmd
+		m.renameInput, cmd = m.renameInput.Update(msg)
+		return m, cmd
+	}
 	switch msg.String() {
 	case "esc":
 		m.modal, m.modalSel = modalNone, 0
@@ -501,6 +918,23 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.modal == modalSessions {
 			if ss := m.orderedSessions(); m.modalSel < len(ss) {
 				return m, deleteSessionCmd(m.ctx, m.client, ss[m.modalSel].ID)
+			}
+		}
+		if m.modal == modalStash && m.modalSel < len(m.stash) {
+			m = m.deleteStash(m.modalSel)
+			if m.modalSel > 0 && m.modalSel >= m.modalCount() {
+				m.modalSel = m.modalCount() - 1
+			}
+		}
+		return m, nil
+	case "y":
+		if m.modal == modalTimeline {
+			if items := m.timelineItems(); m.modalSel < len(items) {
+				if txt := m.messageText(items[m.modalSel].messageID); txt != "" {
+					m.modal, m.modalSel = modalNone, 0
+					m.status = "copied turn"
+					return m, copyClipboardCmd(txt)
+				}
 			}
 		}
 		return m, nil
@@ -587,12 +1021,68 @@ func (m Model) handleLeaderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, loadTodosCmd(m.ctx, m.client, m.cfg.SessionID)
 		}
 		return m, nil
+	case "y":
+		if txt := m.lastAssistantText(); txt != "" {
+			m.status = "copied last response"
+			return m, copyClipboardCmd(txt)
+		}
+		m.status = "nothing to copy"
+		return m, nil
+	case "r":
+		m.view.hideThinking = !m.view.hideThinking
+		m.status = toggleHint("thinking", !m.view.hideThinking)
+		return m, nil
+	case "f":
+		// Toggle the expanded/collapsed state of the reasoning block (plan 08c M7).
+		// ctrl+x r hides thinking entirely; ctrl+x f expands/collapses the full text.
+		m.view.expandedThinking = !m.view.expandedThinking
+		if m.view.expandedThinking {
+			m.status = "thought: expanded"
+		} else {
+			m.status = "thought: collapsed"
+		}
+		return m, nil
+	case "o":
+		m.view.hideTools = !m.view.hideTools
+		m.status = toggleHint("tool output", !m.view.hideTools)
+		return m, nil
+	case "v":
+		// Toggle collapse on the last tool part (plan 08c M7 per-tool collapse).
+		// ctrl+x v collapses/expands the most recent tool's output panel.
+		if id := m.lastToolPartID(); id != "" {
+			m.view = m.view.toggleToolCollapse(id)
+			if m.view.isToolCollapsed(id) {
+				m.status = "tool output: collapsed"
+			} else {
+				m.status = "tool output: expanded"
+			}
+		} else {
+			m.status = "no tool to fold"
+		}
+		return m, nil
+	case "e":
+		return m, openEditorCmd(m.input.Value())
+	case "d":
+		return m.openDiff() // full-screen diff reviewer
+	case "`":
+		return m.focusOrOpenPTY() // embedded terminal (ctrl+] to exit)
+	case "w":
+		return m.stashDraft(), nil // park the current composer draft
+	case "down":
+		return m.enterFirstChild() // descend into the first sub-agent child
+	case "up":
+		return m.gotoParent() // return to the parent session
+	case "]":
+		return m.cycleSibling(+1) // next sibling sub-agent
+	case "[":
+		return m.cycleSibling(-1) // previous sibling sub-agent
 	}
 	return m, nil
 }
 
 // submit sends the composer's text: it creates a session first if none is open,
-// then prompts. Requires a resolved model.
+// then prompts. In shell mode it runs the text as a shell command instead.
+// Requires a resolved model.
 func (m Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
@@ -602,12 +1092,77 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		m.status = "no model configured (pass --provider/--model)"
 		return m, nil
 	}
+	m = m.pushHistory(text) // remember the submission for up/down recall
+	m.persist()
+	// Shell mode: run the text as a command in the open session; output streams
+	// back as tool parts. Requires an existing session (no implicit create).
+	if m.shellMode {
+		m.shellMode = false
+		if m.cfg.SessionID == "" {
+			m.status = "open a session before running a shell command"
+			return m, nil
+		}
+		m.input.SetValue("")
+		m = m.resizeComposer()
+		return m, shellCmd(m.ctx, m.client, m.cfg.SessionID, text, m.effectiveAgent(), m.model)
+	}
 	m.input.SetValue("")
 	m = m.resizeComposer() // collapse back to one row
+	m.scrollOffset = 0     // a new prompt snaps the stream back to the live tail
 	if m.cfg.SessionID == "" {
 		return m, createSessionCmd(m.ctx, m.client, text)
 	}
 	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model, m.agent)
+}
+
+// scrollStep is the lines moved per scrollback keypress.
+const scrollStep = 3
+
+// historyRecall walks the prompt history with up (dir -1, older) / down (dir +1,
+// newer). It only starts browsing from an empty composer (so a draft isn't
+// clobbered); walking past the newest entry exits and clears. Returns false when
+// the key should fall through to normal composer editing.
+func (m Model) historyRecall(dir int) (Model, bool) {
+	if len(m.history) == 0 {
+		return m, false
+	}
+	if m.histIdx == -1 {
+		if dir > 0 || strings.TrimSpace(m.input.Value()) != "" {
+			return m, false // down with no browse, or a non-empty draft → fall through
+		}
+		m.histIdx = len(m.history) - 1
+	} else {
+		m.histIdx += dir
+		if m.histIdx < 0 {
+			m.histIdx = 0
+		}
+		if m.histIdx >= len(m.history) { // walked past newest → live composer
+			m.histIdx = -1
+			m.input.SetValue("")
+			return m.resizeComposer(), true
+		}
+	}
+	m.input.SetValue(m.history[m.histIdx])
+	m.input.CursorEnd()
+	return m.resizeComposer(), true
+}
+
+// effectiveAgent resolves an agent name for endpoints that require one (shell):
+// the selected agent, else a "build"-named agent, else the first available, else
+// "build" as a last resort.
+func (m Model) effectiveAgent() string {
+	if m.agent != "" {
+		return m.agent
+	}
+	for _, a := range m.agents {
+		if a.name == "build" {
+			return a.name
+		}
+	}
+	if len(m.agents) > 0 {
+		return m.agents[0].name
+	}
+	return "build"
 }
 
 // View renders the active screen (or the command overlay when one is open). The
@@ -621,6 +1176,8 @@ func (m Model) View() string {
 		body = m.permissionView()
 	case m.pendingQuestion() != nil:
 		body = m.questionView()
+	case m.diff.open:
+		body = m.diffView()
 	case m.modal != modalNone:
 		body = m.modalView()
 	case m.screen == ScreenSession:
@@ -628,38 +1185,76 @@ func (m Model) View() string {
 	default:
 		body = m.viewSplash()
 	}
-	if !m.paintsBackground() {
-		return body // default theme → terminal-native background
+	if m.width == 0 || m.height == 0 {
+		return body
 	}
-	return lipgloss.NewStyle().Background(m.styles.P.Bg).Width(m.width).Height(m.height).Render(body)
-}
-
-// paintsBackground reports whether the view fills the screen with the theme's
-// background. Only a non-default (light/mono) theme does — the default renders on
-// the terminal's native background so it doesn't paint a mismatched box.
-func (m Model) paintsBackground() bool {
-	return m.width > 0 && m.height > 0 && m.themeName != theme.Palettes()[0].Name
+	// Composite onto a full-screen canvas painted with the theme background. This
+	// truncates each row to width (no wrapping → the frame never exceeds m.height,
+	// so the terminal doesn't scroll the footer/sidebar) and paints every gap/empty
+	// cell with the base bg (mirrors opencode's opentui per-cell compositor). A plain
+	// lipgloss Background wrap can't do this — its inner resets leave a black void.
+	filled := paintBackground(body, m.width, m.height, m.styles.P.Bg)
+	// Composite the toast overlay onto the bottom-right of the Bg-filled frame.
+	// overlayToasts replaces the rightmost N columns of the last K rows with the
+	// toast box; each toast cell carries its own BgElev background so it renders
+	// correctly over the Bg-filled surface (plan 08c M11).
+	return m.overlayToasts(filled)
 }
 
 // viewSplash renders the wordmark, the composer, and the connection status.
 func (m Model) viewSplash() string {
 	s := m.styles
-	wordmark := s.Base.Bold(true).Render("forge")
+	// Each splash line is rendered as a single full-width, center-aligned, Bg-painted
+	// style → one SGR run per line, so the whole row (text + padding) carries the
+	// theme background with no mid-line reset. Lipgloss emits a reset after every
+	// styled run, so per-segment backgrounds leave the rest of the row transparent
+	// (terminal-dark bleed on a light terminal); one style per line avoids that
+	// entirely. plan 08c Tier 0.
+	w := m.width
+	if w <= 0 {
+		// No layout yet — fall back to plain stacking (used only before the first
+		// WindowSizeMsg; View() returns body unpainted in that case anyway).
+		return lipgloss.JoinVertical(lipgloss.Center,
+			s.Base.Bold(true).Render("forge"), "", m.composerView(), "",
+			s.Faint.Render("enter send · ctrl+j newline · ctrl+p commands · ctrl+c quit"))
+	}
+	fill := func(st lipgloss.Style, content string) string {
+		return st.Background(s.P.Bg).Width(w).Align(lipgloss.Center).Render(content)
+	}
+	blank := lipgloss.NewStyle().Background(s.P.Bg).Width(w).Render("")
+
+	// Block-pixel "forge" logo with left→right shimmer sweep (plan 08c M10).
+	// logoFrame returns one string per row; each row is then full-width Bg-filled via
+	// fill() so no transparent cell escapes to the terminal background.
+	logoRows := logoFrame(m.animFrame, s.P)
+	logoLines := make([]string, len(logoRows))
+	for i, row := range logoRows {
+		logoLines[i] = fill(lipgloss.NewStyle(), row)
+	}
+	wordmark := lipgloss.JoinVertical(lipgloss.Left, logoLines...)
+
 	composer := m.composerView()
 	if ac := m.autocompleteView(); ac != "" {
 		composer = lipgloss.JoinVertical(lipgloss.Left, ac, composer)
 	}
-	status := s.Faint.Render(m.statusLine())
-	if m.err != nil {
-		status = lipgloss.NewStyle().Foreground(s.P.Red).Render(m.err.Error())
-	}
-	hint := s.Faint.Render("enter send · ctrl+j newline · ctrl+p commands · ctrl+c quit")
+	// The composer is a fixed-width bordered block; center it on a Bg-filled row.
+	composer = lipgloss.PlaceHorizontal(w, lipgloss.Center, composer,
+		lipgloss.WithWhitespaceBackground(s.P.Bg))
 
-	body := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", composer, "", hint, "", status)
-	if m.width == 0 || m.height == 0 {
+	status := fill(s.Faint, m.statusLine())
+	if m.err != nil {
+		status = fill(lipgloss.NewStyle().Foreground(s.P.Red), m.err.Error())
+	}
+	hint := fill(s.Faint, "enter send · ctrl+j newline · ctrl+p commands · ctrl+c quit")
+
+	body := lipgloss.JoinVertical(lipgloss.Left, wordmark, blank, composer, blank, hint, blank, status)
+	if m.height == 0 {
 		return body
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	// Body rows are already full-width Bg-painted; Place only adds vertical padding,
+	// which WithWhitespaceBackground fills with the theme Bg too.
+	return lipgloss.Place(w, m.height, lipgloss.Center, lipgloss.Center, body,
+		lipgloss.WithWhitespaceBackground(s.P.Bg))
 }
 
 func (m Model) viewSession() string { return m.renderSession() }

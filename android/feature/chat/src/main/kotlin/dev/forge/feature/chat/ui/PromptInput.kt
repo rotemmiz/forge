@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -66,6 +67,8 @@ fun PromptInput(
     onSend: (String, List<FilePartInput>) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    busy: Boolean = false,
+    onStop: () -> Unit = {},
     commands: List<CommandInfo> = emptyList(),
     onSearchFiles: suspend (String) -> List<String> = { emptyList() },
     onRunCommand: (name: String, arguments: String) -> Unit = { _, _ -> },
@@ -89,9 +92,11 @@ fun PromptInput(
     }
 
     var fileResults by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Keep the latest search lambda without restarting the effect when only it changes.
+    val currentSearch by rememberUpdatedState(onSearchFiles)
     LaunchedEffect(mentionQuery) {
         fileResults = if (mentionQuery != null && mentionQuery.length >= 1) {
-            onSearchFiles(mentionQuery)
+            currentSearch(mentionQuery)
         } else {
             emptyList()
         }
@@ -128,7 +133,7 @@ fun PromptInput(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
     ) {
         // ── Autocomplete panels (above the field) ──
         when {
@@ -192,7 +197,7 @@ fun PromptInput(
                 onValueChange = { text = it },
                 textStyle = TextStyle(
                     color = OnSurface,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 13.5.sp,
                 ),
                 cursorBrush = SolidColor(Primary),
@@ -205,7 +210,7 @@ fun PromptInput(
                         Text(
                             "Ask anything…  /  @",
                             color = OnSurfaceGhost,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = ForgeMono,
                             fontSize = 13.5.sp,
                         )
                     }
@@ -227,16 +232,22 @@ fun PromptInput(
                 )
             }
 
-            // Send — 40dp blue square in a 48dp touch target, centered by the Row
+            // Trailing action — 40dp square in a 48dp touch target, centered by the Row.
+            // While the agent is running it becomes a Stop button; otherwise it's Send.
+            val active = busy || canSend
             Box(
                 modifier = Modifier
                     .padding(end = 4.dp)
                     .size(48.dp)
-                    .clickable(enabled = canSend) {
-                        val trimmed = text.trim()
-                        onSend(trimmed, pendingAttachments.map { it.part })
-                        text = ""
-                        pendingAttachments = emptyList()
+                    .clickable(enabled = active) {
+                        if (busy) {
+                            onStop()
+                        } else {
+                            val trimmed = text.trim()
+                            onSend(trimmed, pendingAttachments.map { it.part })
+                            text = ""
+                            pendingAttachments = emptyList()
+                        }
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -244,14 +255,20 @@ fun PromptInput(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(shape)
-                        .background(if (canSend) Primary else Hairline),
+                        .background(
+                            when {
+                                busy -> Error
+                                canSend -> Primary
+                                else -> Hairline
+                            },
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = if (canSend) OnPrimary else OnSurfaceFaint,
-                        modifier = Modifier.size(19.dp),
+                        if (busy) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (busy) "Stop" else "Send",
+                        tint = if (active) OnPrimary else OnSurfaceFaint,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
@@ -277,7 +294,7 @@ private fun CommandPanel(commands: List<CommandInfo>, onPick: (CommandInfo) -> U
                 ) {
                     Text(
                         text = "/${cmd.name}",
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = ForgeMono,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = Secondary,
@@ -318,7 +335,7 @@ private fun MentionPanel(files: List<String>, onPick: (String) -> Unit) {
                 ) {
                     Text(
                         text = path,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = ForgeMono,
                         fontSize = 13.sp,
                         color = LinkCyan,
                         maxLines = 1,
@@ -349,7 +366,7 @@ private fun SuggestionPanel(content: @Composable () -> Unit) {
 private fun SourcePill(source: String) {
     Text(
         text = source,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = ForgeMono,
         fontSize = 11.sp,
         color = LinkCyan,
         modifier = Modifier

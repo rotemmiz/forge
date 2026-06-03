@@ -60,15 +60,19 @@ class ForgeClient @Inject constructor(
                     val parts = partsArr.mapNotNull { p ->
                         try { parsePart(p.jsonObject) } catch (_: Exception) { null }
                     }
-                    val model = info["model"]?.let { ForgeJson.decodeFromJsonElement(MessageModel.serializer(), it) }
-                    val agent = info["agent"]?.jsonPrimitive?.content
+                    // opencode sends these flat on the message info, not nested.
+                    val modelID = info["modelID"]?.jsonPrimitive?.contentOrNull
+                    val providerID = info["providerID"]?.jsonPrimitive?.contentOrNull
+                    val mode = info["mode"]?.jsonPrimitive?.contentOrNull
+                    val agent = info["agent"]?.jsonPrimitive?.contentOrNull
                     val error = if (role == "assistant") {
                         info["error"]?.let { ForgeJson.decodeFromJsonElement(AssistantError.serializer(), it) }
                     } else null
                     val isSummary = role == "assistant" &&
                         info["summary"]?.jsonPrimitive?.booleanOrNull == true
                     Message(id = id, sessionID = sessionID, role = role, time = time,
-                        parts = parts, error = error, model = model, agent = agent,
+                        parts = parts, error = error, modelID = modelID,
+                        providerID = providerID, mode = mode, agent = agent,
                         isSummary = isSummary)
                 } catch (_: Exception) { null }
             }
@@ -96,9 +100,18 @@ class ForgeClient @Inject constructor(
         text: String,
         directory: String? = null,
         attachments: List<FilePartInput> = emptyList(),
+        model: ModelRef? = null,
+        agent: String? = null,
     ) = post(
         path = "/session/$sessionId/message",
         body = buildJsonObject {
+            model?.let {
+                put("model", buildJsonObject {
+                    put("providerID", it.providerID)
+                    put("modelID", it.modelID)
+                })
+            }
+            agent?.let { put("agent", it) }
             put("parts", buildJsonArray {
                 if (text.isNotBlank()) {
                     add(buildJsonObject {
@@ -126,6 +139,25 @@ class ForgeClient @Inject constructor(
             val arr = json as? JsonArray ?: return@get emptyList()
             arr.mapNotNull {
                 try { ForgeJson.decodeFromJsonElement(CommandInfo.serializer(), it) } catch (_: Exception) { null }
+            }
+        }
+
+    /** GET /provider — providers and their models, for the model picker. */
+    suspend fun listProviders(directory: String? = null): ProvidersResponse =
+        get("/provider", directory = directory) { json ->
+            try {
+                ForgeJson.decodeFromJsonElement(ProvidersResponse.serializer(), json)
+            } catch (_: Exception) {
+                ProvidersResponse()
+            }
+        }
+
+    /** GET /agent — selectable agents (modes), for the agent picker. */
+    suspend fun listAgents(directory: String? = null): List<AgentInfo> =
+        get("/agent", directory = directory) { json ->
+            val arr = json as? JsonArray ?: return@get emptyList()
+            arr.mapNotNull {
+                try { ForgeJson.decodeFromJsonElement(AgentInfo.serializer(), it) } catch (_: Exception) { null }
             }
         }
 
@@ -255,6 +287,43 @@ class ForgeClient @Inject constructor(
 
     suspend fun deleteSession(sessionId: String) = delete("/session/$sessionId")
 
+    /** POST /session/{id}/abort — interrupt a running agent turn. Returns true if it was aborted. */
+    suspend fun abortSession(sessionId: String, directory: String? = null): Boolean = post(
+        path = "/session/$sessionId/abort",
+        body = JsonObject(emptyMap()),
+        directory = directory,
+    ) { json -> (json as? JsonPrimitive)?.booleanOrNull ?: false }
+
+    /** PATCH /session/{id} — rename (set the title). Returns the updated session. */
+    suspend fun renameSession(sessionId: String, title: String, directory: String? = null): Session = patch(
+        path = "/session/$sessionId",
+        body = buildJsonObject { put("title", title) },
+        directory = directory,
+    ) { json -> ForgeJson.decodeFromJsonElement(Session.serializer(), json) }
+
+    /** POST /session/{id}/summarize — compact the context using the given model. */
+    suspend fun summarizeSession(sessionId: String, model: ModelRef, directory: String? = null): Boolean = post(
+        path = "/session/$sessionId/summarize",
+        body = buildJsonObject {
+            put("providerID", model.providerID)
+            put("modelID", model.modelID)
+        },
+        directory = directory,
+    ) { json -> (json as? JsonPrimitive)?.booleanOrNull ?: false }
+
+    /** POST /session/{id}/share — publish a shareable link. Returns the session with share.url. */
+    suspend fun shareSession(sessionId: String, directory: String? = null): Session = post(
+        path = "/session/$sessionId/share",
+        body = JsonObject(emptyMap()),
+        directory = directory,
+    ) { json -> ForgeJson.decodeFromJsonElement(Session.serializer(), json) }
+
+    /** DELETE /session/{id}/share — revoke the shared link. Returns the updated session. */
+    suspend fun unshareSession(sessionId: String, directory: String? = null): Session = delete(
+        path = "/session/$sessionId/share",
+        directory = directory,
+    ) { json -> ForgeJson.decodeFromJsonElement(Session.serializer(), json) }
+
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
     private suspend fun <T> get(
@@ -287,6 +356,43 @@ class ForgeClient @Inject constructor(
         httpClient.newCall(req).execute().use { resp ->
             val respBody = resp.body?.string() ?: "{}"
             if (!resp.isSuccessful) error("HTTP ${resp.code} for POST $path: $respBody")
+            val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
+            parse(elem)
+        }
+    }
+
+    private suspend fun <T> patch(
+        path: String,
+        body: JsonObject,
+        directory: String? = null,
+        parse: (JsonElement) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val url = buildUrl(path, null)
+        val reqBody = body.toString().toRequestBody(JSON_MEDIA)
+        val req = Request.Builder().url(url).patch(reqBody).also {
+            directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
+        }.build()
+        httpClient.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: "{}"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for PATCH $path: $respBody")
+            val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
+            parse(elem)
+        }
+    }
+
+    /** DELETE variant that parses a response body (e.g. /share returns the updated session). */
+    private suspend fun <T> delete(
+        path: String,
+        directory: String?,
+        parse: (JsonElement) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val url = buildUrl(path, null)
+        val req = Request.Builder().url(url).delete().also {
+            directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
+        }.build()
+        httpClient.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: "{}"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for DELETE $path: $respBody")
             val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
             parse(elem)
         }

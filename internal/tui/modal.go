@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,6 +24,12 @@ const (
 	modalThemes
 	modalTimeline
 	modalStatus
+	modalRename  // text-input overlay (rename the current session)
+	modalMCP     // read-only: configured MCP servers (GET /mcp)
+	modalSkills  // read-only: available skills (GET /skill)
+	modalHelp    // read-only: keybindings / commands reference
+	modalVariant // model-variant picker (plan 08b §7)
+	modalStash   // stashed prompt drafts (plan 08b §6)
 )
 
 // paletteAction identifies a command-palette entry (dispatched by id, not index,
@@ -37,6 +45,21 @@ const (
 	paTimeline
 	paStatus
 	paRefresh
+	paRename
+	paShare
+	paUnshare
+	paSummarize
+	paAbort
+	paFork
+	paDelete
+	paDiff
+	paTerminal
+	paVariant
+	paStash
+	paStashList
+	paMCP
+	paSkills
+	paHelp
 )
 
 type paletteCmd struct {
@@ -49,10 +72,25 @@ var paletteItems = []paletteCmd{
 	{"New session", paNewSession},
 	{"Switch session", paSwitchSession},
 	{"Switch model", paSwitchModel},
+	{"Model variant", paVariant},
 	{"Switch agent", paSwitchAgent},
 	{"Switch theme", paSwitchTheme},
 	{"Timeline", paTimeline},
 	{"Status", paStatus},
+	{"Rename session", paRename},
+	{"Fork session", paFork},
+	{"Summarize context", paSummarize},
+	{"Interrupt (abort turn)", paAbort},
+	{"Review changes (diff)", paDiff},
+	{"Terminal (PTY)", paTerminal},
+	{"Stash draft", paStash},
+	{"Stashed drafts", paStashList},
+	{"Share session", paShare},
+	{"Unshare session", paUnshare},
+	{"Delete session", paDelete},
+	{"MCP servers", paMCP},
+	{"Skills", paSkills},
+	{"Keybindings / help", paHelp},
 	{"Refresh sessions", paRefresh},
 }
 
@@ -160,6 +198,53 @@ func (m Model) modalItems() (title string, rows []string, footer string) {
 			rows = append(rows, truncate(line, 52)) // keep within the panel
 		}
 		return "Status", rows, "esc close"
+	case modalMCP:
+		for _, s := range m.mcpServers {
+			row := s.Name
+			if s.Status != "" {
+				row += "  " + s.Status
+			}
+			rows = append(rows, truncate(row, 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no MCP servers)"}
+		}
+		return "MCP servers", rows, "esc close"
+	case modalSkills:
+		for _, s := range m.skills {
+			row := s.Name
+			if s.Description != "" {
+				row += "  " + s.Description
+			}
+			rows = append(rows, truncate(row, 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no skills)"}
+		}
+		return "Skills", rows, "esc close"
+	case modalHelp:
+		rows = helpRows()
+		return "Keybindings", rows, "esc close"
+	case modalVariant:
+		for _, v := range m.activeVariants() {
+			mark := "  "
+			if v == m.model.Variant {
+				mark = "● " // the active variant
+			}
+			rows = append(rows, mark+v)
+		}
+		if len(rows) == 0 {
+			rows = []string{"(this model has no variants)"}
+		}
+		return "Model variant", rows, "enter select · esc close"
+	case modalStash:
+		for _, d := range m.stash {
+			rows = append(rows, truncate(firstLine(d), 52))
+		}
+		if len(rows) == 0 {
+			rows = []string{"(no stashed drafts)"}
+		}
+		return "Stashed drafts", rows, "enter restore · ctrl+d delete · esc close"
 	default:
 		return "", nil, ""
 	}
@@ -207,6 +292,81 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		case paStatus:
 			m.modal, m.modalSel = modalStatus, 0
 			return m, nil
+		case paRename:
+			if m.cfg.SessionID == "" {
+				m.status = "no session to rename"
+				return m, nil
+			}
+			m.modal = modalRename
+			if cur := m.currentSession(); cur != nil {
+				m.renameInput.SetValue(cur.Title)
+			}
+			m.renameInput.CursorEnd()
+			m.renameInput.Focus()
+			return m, nil
+		case paShare:
+			if m.cfg.SessionID == "" {
+				m.status = "no session to share"
+				return m, nil
+			}
+			cur := m.currentSession()
+			if cur != nil && cur.Share != nil && cur.Share.URL != "" {
+				sh := cur.Share
+				m.status = "shared · " + sh.URL + " (copied)"
+				return m, copyClipboardCmd(sh.URL)
+			}
+			m.status = "sharing…"
+			return m, shareSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paUnshare:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			return m, unshareSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paSummarize:
+			if m.cfg.SessionID == "" || !m.model.ok() {
+				m.status = "summarize needs an open session + model"
+				return m, nil
+			}
+			m.status = "summarizing…"
+			return m, summarizeSessionCmd(m.ctx, m.client, m.cfg.SessionID, m.model)
+		case paAbort:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			m.status = "interrupting…"
+			return m, abortSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paFork:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			m.status = "forking…"
+			return m, forkSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paDelete:
+			if m.cfg.SessionID == "" {
+				return m, nil
+			}
+			return m, deleteSessionCmd(m.ctx, m.client, m.cfg.SessionID)
+		case paDiff:
+			return m.openDiff()
+		case paTerminal:
+			return m.focusOrOpenPTY()
+		case paVariant:
+			m.modal, m.modalSel = modalVariant, m.variantSelIndex()
+			return m, nil
+		case paStash:
+			return m.stashDraft(), nil
+		case paStashList:
+			m.modal, m.modalSel = modalStash, 0
+			return m, nil
+		case paMCP:
+			m.modal, m.modalSel = modalMCP, 0
+			return m, loadMCPCmd(m.ctx, m.client)
+		case paSkills:
+			m.modal, m.modalSel = modalSkills, 0
+			return m, loadSkillsCmd(m.ctx, m.client)
+		case paHelp:
+			m.modal, m.modalSel = modalHelp, 0
+			return m, nil
 		case paRefresh:
 			return m, loadSessionsCmd(m.ctx, m.client)
 		}
@@ -221,8 +381,10 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 	case modalModels:
 		m.modal = modalNone
 		if m.modalSel < len(m.choices) {
-			m.model = promptModel(m.choices[m.modalSel])
+			ch := m.choices[m.modalSel]
+			m.model = promptModel{Provider: ch.Provider, Model: ch.Model} // switching model resets the variant
 			m.status = "model · " + m.model.label()
+			m.persist() // remember the model across runs
 		}
 	case modalAgents:
 		m.modal = modalNone
@@ -235,6 +397,7 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 		if ps := theme.Palettes(); m.modalSel < len(ps) {
 			m = m.applyTheme(ps[m.modalSel].Name, ps[m.modalSel].Palette)
 			m.status = "theme · " + m.themeName
+			m.persist() // remember the theme across runs
 		}
 	case modalTimeline:
 		items := m.timelineItems()
@@ -243,64 +406,151 @@ func (m Model) modalSelect() (tea.Model, tea.Cmd) {
 			m.status = "reverting…"
 			return m, revertCmd(m.ctx, m.client, m.cfg.SessionID, items[m.modalSel].messageID)
 		}
-	case modalStatus:
+	case modalVariant:
+		vs := m.activeVariants()
+		m.modal = modalNone
+		if m.modalSel < len(vs) {
+			m.model.Variant = vs[m.modalSel]
+			m.status = "variant · " + m.model.Variant
+			m.persist()
+		}
+	case modalStash:
+		i := m.modalSel
+		m.modal, m.modalSel = modalNone, 0
+		return m.popStash(i), nil
+	case modalStatus, modalMCP, modalSkills, modalHelp:
 		m.modal = modalNone // read-only — enter just closes
+	case modalRename:
+		title := strings.TrimSpace(m.renameInput.Value())
+		id := m.cfg.SessionID
+		m.modal, m.renameInput = modalNone, blurInput(m.renameInput)
+		if title != "" && id != "" {
+			return m, renameSessionCmd(m.ctx, m.client, id, title)
+		}
 	}
 	return m, nil
 }
 
+// blurInput clears the value + focus of a text input (reset between uses).
+func blurInput(ti textinput.Model) textinput.Model {
+	ti.Blur()
+	ti.SetValue("")
+	return ti
+}
+
 // modalView renders the active modal as a centered panel over the background.
+//
+// Border: rounded border with BorderActive color (brighter than Border) to
+// signal an "owned surface" — mirrors opencode's dialog-select.tsx which uses a
+// themed border.
+//
+// Surface fill: every row is rendered through Surface(BgElev) padded to the
+// inner content width so the panel background is uniform — no transparent
+// trailing cells on light terminals. (plan 08c M8 Tier 0 fill rule)
+//
+// Filter affordance: a "Search  /" hint below the title signals that typing
+// filters the list — mirrors opencode's dialog-select.tsx filter input rendering.
+//
+// Selected row: s.Selection already provides the amber selection bar;
+// Surface(BgElev) is applied to non-selected rows so they too have a fill.
 func (m Model) modalView() string {
 	s := m.styles
+
+	// innerWidth is the usable content width inside Padding(1,2): width - 2*2 = width-4.
+	// All rows are padded/truncated to innerWidth for uniform background fill.
+	const (
+		width      = 56
+		innerWidth = width - 4 // width minus 2×horizontal padding (Padding(1,2) → 2 cols each side)
+	)
+
+	// surfaceRow renders a plain (non-selected) row with the panel surface
+	// background so every trailing cell is painted. Each call returns a string
+	// whose visible width == innerWidth. (plan 08c M8)
+	surfaceRow := func(content string) string {
+		return s.Surface(s.P.BgElev).Width(innerWidth).Render(content)
+	}
+
+	// The rename overlay is a single text field, not a list.
+	if m.modal == modalRename {
+		body := lipgloss.JoinVertical(lipgloss.Left,
+			surfaceRow(s.Section.Render("Rename session")),
+			surfaceRow(""),
+			m.renameInput.View(),
+			surfaceRow(""),
+			surfaceRow(s.Faint.Render("enter save · esc cancel")),
+		)
+		panel := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(s.P.BorderActive).
+			BorderBackground(s.P.BgElev).
+			Background(s.P.BgElev).
+			Padding(1, 2).Width(width).Render(body)
+		return centerScreen(m.width, m.height, panel)
+	}
+
 	title, rows, footer := m.modalItems()
 
-	width := 56
-
 	// Window long lists around the selection so a provider with hundreds of
-	// models (or many sessions) can't overflow the panel. Scroll is Phase 3;
-	// this keeps the modal bounded until then.
+	// models (or many sessions) can't overflow the panel.
 	const maxRows = 12
-	start := 0
-	if len(rows) > maxRows {
-		start = m.modalSel - maxRows/2
-		if start < 0 {
-			start = 0
-		}
-		if hi := len(rows) - maxRows; start > hi {
-			start = hi
-		}
-	}
-	end := start + maxRows
-	if end > len(rows) {
-		end = len(rows)
-	}
+	start, end := windowAround(m.modalSel, len(rows), maxRows)
 
 	var lines []string
-	lines = append(lines, s.Section.Render(title), "")
+
+	// Title row + a blank gap line — matches opencode dialog-select.tsx layout
+	// which renders a bold title above the filter input and list body.
+	lines = append(lines, surfaceRow(s.Section.Render(title)))
+	lines = append(lines, surfaceRow(""))
+
+	// Filter affordance: a "/" hint that signals the list is filterable by
+	// typing — mirrors opencode's dialog-select.tsx filter input affordance
+	// (lines 363–389).
+	if isFilterableModal(m.modal) {
+		lines = append(lines, surfaceRow(s.Faint.Render("Search  /")))
+		lines = append(lines, surfaceRow(""))
+	}
+
 	if start > 0 {
-		lines = append(lines, s.Faint.Render("  ↑ more"))
+		lines = append(lines, surfaceRow(s.Faint.Render("↑ more")))
 	}
 	for i := start; i < end; i++ {
 		if i == m.modalSel {
-			lines = append(lines, s.Selection.Width(width-4).Render(" "+rows[i])) // -4: fits inside Padding(1,2)
+			// Selection bar: amber bg, dark bold text — full inner width so the
+			// highlight extends to the right edge of the panel.
+			lines = append(lines, s.Selection.Width(innerWidth).Render(" "+rows[i]))
 		} else {
-			lines = append(lines, s.Base.Render(" "+rows[i]))
+			// Non-selected rows: surface-filled so no transparent trailing cells.
+			lines = append(lines, surfaceRow(s.Base.Render(" "+rows[i])))
 		}
 	}
 	if end < len(rows) {
-		lines = append(lines, s.Faint.Render(" ↓ more"))
+		lines = append(lines, surfaceRow(s.Faint.Render("↓ more")))
 	}
-	lines = append(lines, "", s.Faint.Render(footer))
+	lines = append(lines, surfaceRow(""))
+	lines = append(lines, surfaceRow(s.Faint.Render(footer)))
 
 	panel := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(s.P.Border).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(s.P.BorderActive).
+		BorderBackground(s.P.BgElev).
+		Background(s.P.BgElev).
 		Padding(1, 2).
 		Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 
-	if m.width == 0 || m.height == 0 {
-		return panel
+	return centerScreen(m.width, m.height, panel)
+}
+
+// isFilterableModal returns true for dialogs where typing filters the list —
+// matches the subset of opencode dialogs that render a filter input
+// (dialog-model, dialog-theme-list, dialog-agent, dialog-session-list,
+// dialog-stash). Read-only or single-action modals (status, help, MCP,
+// skills, timeline, rename, variant) don't benefit from a search hint.
+func isFilterableModal(k modalKind) bool {
+	switch k {
+	case modalPalette, modalModels, modalThemes, modalAgents, modalSessions, modalStash:
+		return true
+	default:
+		return false
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel)
 }

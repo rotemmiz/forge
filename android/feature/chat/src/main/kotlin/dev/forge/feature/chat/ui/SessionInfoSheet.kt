@@ -42,7 +42,7 @@ fun SessionInfoSheet(session: Session, onDismiss: () -> Unit) {
             session.directory?.let { dir ->
                 Text(
                     text = dir,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = ForgeMono,
                     fontSize = 11.5.sp,
                     color = OnSurfaceFaint,
                     modifier = Modifier.padding(top = 2.dp),
@@ -65,7 +65,7 @@ fun SessionInfoSheet(session: Session, onDismiss: () -> Unit) {
                 Text("No usage recorded yet.", fontSize = 13.sp, color = OnSurfaceFaint)
             }
             session.cost?.let { cost ->
-                InfoRow("Cost", "$" + String.format("%.4f", cost), emphasize = true)
+                InfoRow("Cost", "$" + String.format(java.util.Locale.US, "%.4f", cost), emphasize = true)
             }
 
             session.summary?.let { s ->
@@ -84,7 +84,7 @@ fun SessionInfoSheet(session: Session, onDismiss: () -> Unit) {
 private fun SectionLabel(text: String) {
     Text(
         text = text,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = ForgeMono,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.sp,
@@ -102,7 +102,7 @@ private fun InfoRow(label: String, value: String, emphasize: Boolean = false) {
         Text(label, fontSize = 13.5.sp, color = OnSurfaceVariant)
         Text(
             text = value,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 13.sp,
             fontWeight = if (emphasize) FontWeight.Medium else FontWeight.Normal,
             color = if (emphasize) OnSurface else OnSurfaceVariant,

@@ -4,11 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -42,9 +42,9 @@ fun ToolRowGroup(parts: List<ToolPart>, modifier: Modifier = Modifier) {
     androidx.compose.foundation.layout.Column(
         modifier = modifier
             .padding(horizontal = 14.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(ForgeShapes.sm)
             .background(SurfaceContainer)
-            .border(1.dp, Hairline, RoundedCornerShape(8.dp)),
+            .border(1.dp, Hairline, ForgeShapes.sm),
     ) {
         rows.forEachIndexed { index, row ->
             if (index > 0) HorizontalDivider(color = Hairline)
@@ -69,42 +69,43 @@ private fun ToolRowView(row: ToolRow) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp), // centered in 44dp, no vertical pad (mock)
     ) {
         Text(
             text = row.glyph,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 13.sp,
             color = OnSurfaceFaint,
             modifier = Modifier.width(14.dp),
         )
         Text(
             text = row.label,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 13.sp,
             color = OnSurface,
         )
+        // The path fills the slack (so meta sits at the true right edge) and
+        // ellipsizes; a Spacer stands in when there's no path.
         if (row.path != null) {
             Text(
                 text = row.path,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 13.sp,
                 color = OnSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
+        } else {
+            Spacer(Modifier.weight(1f))
         }
         if (row.meta != null) {
             Text(
                 text = row.meta,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = ForgeMono,
                 fontSize = 13.sp,
                 color = if (row.metaIsError) Error else OnSurfaceFaint,
                 maxLines = 1,
-                modifier = Modifier
-                    .weight(1f)
-                    .wrapContentWidth(Alignment.End),
             )
         }
     }

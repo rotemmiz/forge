@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -31,9 +30,15 @@ func (m Model) renderSession() string {
 	if dock := m.tasksDockView(leftW); dock != "" {
 		footer = dock + "\n" + footer // tasks dock above the composer area
 	}
+	if sf := m.subagentFooterView(leftW); sf != "" {
+		footer = sf + "\n" + footer // sub-agent context strip (plan 08b §9)
+	}
+	if pty := m.ptyPaneView(leftW); pty != "" {
+		footer = pty + "\n" + footer // embedded terminal split (plan 08b §2)
+	}
 
 	sid := m.cfg.SessionID
-	header := s.Section.Render(m.sessionTitle(sid))
+	header := s.Section.Render(truncate(m.sessionTitle(sid), leftW))
 	var blocks []string
 	for _, msg := range m.store.messages[sid] {
 		if b := m.renderMessage(msg, m.store.parts[msg.ID]); b != "" {
@@ -74,11 +79,14 @@ func (m Model) renderMessage(msg Message, parts []Part) string {
 				out = append(out, m.prose(txt))
 			}
 		case "reasoning":
-			if strings.TrimSpace(p.Text) == "" {
+			if m.view.hideThinking || strings.TrimSpace(p.Text) == "" {
 				continue
 			}
 			out = append(out, m.thinking(p.Text))
 		case "tool":
+			if m.view.hideTools {
+				continue
+			}
 			out = append(out, m.toolRow(p))
 		}
 	}
@@ -106,50 +114,37 @@ func (m Model) userTurn(text string) string {
 	return bar.Render(m.styles.Base.Render(text))
 }
 
+// prose renders assistant text as styled markdown via glamour (plan 08c M4).
+// The glamour render is theme-driven (colors from m.styles.P.Markdown) and
+// cached by (text, width, themeName) so repeated frame renders are free.
+// Background fill is handled inside renderMarkdown (see markdown.go).
 func (m Model) prose(text string) string {
-	return lipgloss.NewStyle().Width(m.contentWidth()).Render(m.styles.Base.Render(text))
+	return m.renderMarkdown(text)
 }
 
-// thinking renders the design's "+ Thought" line (truncated to the column).
+// thinking renders the reasoning block. When collapsed (default) it shows a
+// one-liner "- Thought: <first line>"; when expanded it shows the full text
+// with an Amber header and muted body. Toggle: ctrl+x r (already flips
+// hideThinking) — a second chord ctrl+x R expands/collapses the full text.
+// plan 08c M7: foldable reasoning.
 func (m Model) thinking(text string) string {
-	head := "+ Thought "
-	body := truncate(firstLine(text), m.contentWidth()-lipgloss.Width(head))
-	return lipgloss.NewStyle().Foreground(m.styles.P.Amber).Render(head) + m.styles.Faint.Render(body)
-}
-
-// toolRow renders a terse tool one-liner colored by status (design tool grammar).
-func (m Model) toolRow(p Part) string {
 	s := m.styles
-	var st struct {
-		Status string `json:"status"`
-		Title  string `json:"title"`
-		Output string `json:"output"`
-		Error  string `json:"error"`
+	cw := m.contentWidth()
+	if m.view.expandedThinking {
+		// Expanded: amber header + muted body paragraphs.
+		header := lipgloss.NewStyle().Foreground(s.P.Amber).Render("▾ Thought")
+		body := s.Faint.Width(cw).Render(strings.TrimSpace(text))
+		return header + "\n" + body
 	}
-	_ = json.Unmarshal(p.State, &st)
-
-	glyph, gstyle := "•", lipgloss.NewStyle().Foreground(s.P.Amber)
-	switch st.Status {
-	case "completed":
-		glyph, gstyle = "✓", lipgloss.NewStyle().Foreground(s.P.Green)
-	case "error":
-		glyph, gstyle = "✗", lipgloss.NewStyle().Foreground(s.P.Red)
-	}
-	label := s.Dim.Render(p.Tool)
-	detail := st.Title
-	if detail == "" {
-		detail = st.Status
-	}
-	// Bound the row to the column: the prefix (glyph + tool) is short, so trim the
-	// detail to whatever space is left.
-	avail := m.contentWidth() - lipgloss.Width(glyph) - 1 - lipgloss.Width(p.Tool) - 1
-	row := gstyle.Render(glyph) + " " + label + " " + s.Faint.Render(truncate(detail, avail))
-	if st.Status == "error" && st.Error != "" {
-		errLine := truncate(firstLine(st.Error), m.contentWidth()-2)
-		row += "\n  " + lipgloss.NewStyle().Foreground(s.P.Red).Render(errLine)
-	}
-	return row
+	// Collapsed: single-line summary (first non-empty line of the text).
+	head := "▸ Thought "
+	summary := firstLine(strings.TrimSpace(text))
+	body := truncate(summary, cw-lipgloss.Width(head))
+	return lipgloss.NewStyle().Foreground(s.P.Amber).Render(head) + s.Faint.Render(body)
 }
+
+// toolRow is defined in toolrender.go (plan 08c M7): per-tool headers,
+// collapsible output panels, and todo-list rendering.
 
 func (m Model) contentWidth() int {
 	w := m.streamWidth // set when a sidebar narrows the stream column
@@ -176,12 +171,23 @@ func (m Model) barWidth() int {
 // and pins the status line at the bottom.
 // composerView renders the prompt input with the design's blue left accent bar.
 func (m Model) composerView() string {
+	accent := m.styles.P.Blue
+	if m.shellMode {
+		accent = m.styles.P.Red // shell mode: distinct accent so it's unmistakable
+	}
 	bar := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder(), false, false, false, true).
-		BorderForeground(m.styles.P.Blue).
+		BorderForeground(accent).
+		BorderBackground(m.styles.P.Bg). // paint the border cell too (no terminal bleed)
+		Background(m.styles.P.Bg).       // fill the composer row so it owns its bg
 		PaddingLeft(1).
 		Width(m.barWidth()) // -1: the left border renders outside Width
-	return bar.Render(m.input.View())
+	view := bar.Render(m.input.View())
+	if m.shellMode {
+		label := lipgloss.NewStyle().Foreground(m.styles.P.Red).Render("! shell — enter run · esc cancel")
+		return lipgloss.JoinVertical(lipgloss.Left, label, view)
+	}
+	return view
 }
 
 // statusLine is the bottom status: connection state plus the active model.
@@ -201,7 +207,18 @@ func (m Model) frame(body, footer string) string {
 	}
 	lines := strings.Split(body, "\n")
 	if len(lines) > avail {
-		lines = lines[len(lines)-avail:]
+		// Window the body to `avail` lines, scrolled up from the bottom by
+		// scrollOffset (clamped so we can't scroll past the top/bottom).
+		maxOff := len(lines) - avail
+		off := m.scrollOffset
+		if off > maxOff {
+			off = maxOff
+		}
+		if off < 0 {
+			off = 0
+		}
+		end := len(lines) - off
+		lines = lines[end-avail : end]
 	} else {
 		for len(lines) < avail { // pad so footer sits at the bottom
 			lines = append(lines, "")
@@ -215,4 +232,51 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// centerScreen places body in the middle of a width×height screen, returning it
+// unplaced when either dimension is still zero (pre-first-resize). Shared by the
+// full-screen overlays (modals, diff reviewer, prompts).
+func centerScreen(width, height int, body string) string {
+	if width == 0 || height == 0 {
+		return body
+	}
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, body)
+}
+
+// windowAround returns the [start,end) slice of count rows that fits height
+// lines with sel kept roughly centered; the whole range when it already fits.
+func windowAround(sel, count, height int) (int, int) {
+	if count <= height {
+		return 0, count
+	}
+	start := sel - height/2
+	if start < 0 {
+		start = 0
+	}
+	if hi := count - height; start > hi {
+		start = hi
+	}
+	return start, start + height
+}
+
+// windowFrom returns the [start,end) slice of count rows starting at offset off
+// (clamped so the last line can reach the bottom), fitting height lines — the
+// top-anchored counterpart to windowAround, for scroll offsets.
+func windowFrom(off, count, height int) (int, int) {
+	maxOff := count - height
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if off > maxOff {
+		off = maxOff
+	}
+	if off < 0 {
+		off = 0
+	}
+	end := off + height
+	if end > count {
+		end = count
+	}
+	return off, end
 }

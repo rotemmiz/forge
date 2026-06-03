@@ -127,7 +127,7 @@ internal fun buildInlineSpans(
             text[pos] == '`' -> {
                 val end = text.indexOf('`', pos + 1)
                 if (end > pos) {
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = codeColor, fontSize = 13.sp)) {
+                    withStyle(SpanStyle(fontFamily = ForgeMono, color = codeColor, fontSize = 13.sp)) {
                         append(text.substring(pos + 1, end))
                     }
                     pos = end + 1
@@ -174,6 +174,17 @@ internal fun buildInlineSpans(
                         }
                         pos = urlEnd + 1
                     } else { append(text[pos++]) }
+                } else { append(text[pos++]) }
+            }
+            // @-mention: @path → cyan mono (design user-turn / prose idiom)
+            text[pos] == '@' && (pos == 0 || text[pos - 1].isWhitespace()) -> {
+                var end = pos + 1
+                while (end < text.length && !text[end].isWhitespace()) end++
+                if (end > pos + 1) {
+                    withStyle(SpanStyle(color = linkColor, fontFamily = ForgeMono)) {
+                        append(text.substring(pos, end))
+                    }
+                    pos = end
                 } else { append(text[pos++]) }
             }
             else -> append(text[pos++])
@@ -224,7 +235,7 @@ private fun HeaderBlock(block: MdBlock.Header) {
             text = block.text.uppercase(),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             color = HeaderPurple,
             letterSpacing = 1.sp,
             modifier = Modifier.padding(start = 14.dp, top = 10.dp, end = 14.dp, bottom = 2.dp),
@@ -238,12 +249,12 @@ private fun CodeBlockView(block: MdBlock.CodeBlock) {
         modifier = Modifier
             .padding(horizontal = 14.dp, vertical = 4.dp)
             .fillMaxWidth()
-            .background(SurfaceContainerLowest, RoundedCornerShape(4.dp))
-            .border(1.dp, Hairline, RoundedCornerShape(4.dp)),
+            .background(SurfaceContainerLowest, ForgeShapes.xs)
+            .border(1.dp, Hairline, ForgeShapes.xs),
     ) {
         Text(
             text = block.lines.joinToString("\n"),
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             color = Secondary,
@@ -273,17 +284,16 @@ private fun ListItemBlock(block: MdBlock.ListItem) {
         Text(
             text = if (block.index != null) "${block.index}." else "•",
             fontSize = 14.sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = ForgeMono,
             fontWeight = FontWeight.Bold,
             color = Tertiary,
-            modifier = Modifier.widthIn(min = 24.dp),
         )
         Text(
             text = buildInlineSpans(block.text, codeColor = Secondary, linkColor = LinkCyan),
             fontSize = 14.sp,
             lineHeight = 20.sp,
             color = OnSurface,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(start = 10.dp), // mock gap:10 counter→text
         )
     }
 }
@@ -294,8 +304,8 @@ private fun TableBlock(block: MdBlock.Table) {
     Column(
         modifier = Modifier
             .padding(horizontal = 14.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, Hairline, RoundedCornerShape(8.dp)),
+            .clip(ForgeShapes.sm)
+            .border(1.dp, Hairline, ForgeShapes.sm),
     ) {
         // Header row — purple, bold mono (design table-header color)
         Row(modifier = Modifier.fillMaxWidth().background(SurfaceContainerHigh)) {

@@ -25,18 +25,24 @@
 
   Then B (`02-agent-engine`), C (`03`/`04`), D (`05` plugin-host, `13` remote-ops, `08` TUI).
 
-  ## Git workflow (every feature)
-  Follow this loop for each feature; do not push unreviewed work to `main`.
+  ## Git workflow (every feature) — agent owns the PR end-to-end, until merged
+  An agent assigned a feature/track is NOT done when the PR opens — it is done only when the PR is
+  **reviewed clean, CI-green, and merged**. Run this whole loop yourself; never hand back a
+  green-but-unmerged PR. Do not push unreviewed work to `main`.
   1. **Start fresh:** `git checkout main && git pull`, then branch (`git checkout -b <feature>`).
   2. **Build the feature**, committing as the work warrants (no `Co-Authored-By`).
-  3. **When done:** commit, `git push -u origin <feature>`, open a PR (`gh pr create`).
-  4. **Local review gate** (hosted CI minutes are exhausted — do NOT rely on GitHub Actions):
-     spin a review subagent locally, apply fixes, re-review, and repeat until the review is
-     **clean** (no blocking/should-fix findings). Mimic CI locally each round: `go build/vet`,
-     `gofmt -l`, `golangci-lint run`, `go test ./...`, `make gen` + `git diff --exit-code
-     internal/api/gen/`, and `scripts/run-conformance.sh self` (+ a dual-run gate for new endpoints).
-  5. **Merge the PR from GitHub** (`gh pr merge`), then `git checkout main && git pull` to switch
-     back to `main` and sync.
+  3. **Local pre-push gate** (fast self-check before spending CI): `go build ./...`, `go vet ./...`,
+     `gofmt -l` (empty), `golangci-lint run`, `go test ./...`, `make gen` + `git diff --exit-code
+     internal/api/gen/`, `scripts/run-conformance.sh self` (+ a dual-run gate for new endpoints).
+     Then commit, `git push -u origin <feature>`, `gh pr create`.
+  4. **Independent review loop.** Spin a SEPARATE review subagent (do NOT review your own diff
+     inline) → read its findings → fix every blocking/should-fix item → push the review-round fixes →
+     re-spin the review. Repeat until the review comes back **clean**.
+  5. **Wait for green CI.** GitHub Actions runs on the PR — `gh pr checks <pr> --watch`. Fix any
+     failure and re-push until all checks pass.
+  6. **Merge** (`gh pr merge --squash`) once review is clean AND CI is green; if `main` moved, rebase
+     first and re-run the gate. Then `git checkout main && git pull` to sync. The agent exits only
+     after the merge succeeds.
 
   ## Non-negotiables
   - **Wire-compat by default.** Match opencode's endpoints, the SSE `{ id, type, properties }` shape, PTY framing (`0x00 + UTF-8 JSON {cursor}`), Basic/`?auth_token=` auth, `x-opencode-directory` routing. Log

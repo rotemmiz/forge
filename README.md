@@ -63,3 +63,4 @@ MIT — see [LICENSE](LICENSE).
 - [`plans/00-masterplan.md`](plans/00-masterplan.md) — vision, frozen wire contract, build sequence
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — git workflow, local CI gate, code style
 - [`DEPENDENCIES.md`](DEPENDENCIES.md) — vetted library choices and rationale
+- [`CLAUDE.md`](CLAUDE.md) — instructions for agents

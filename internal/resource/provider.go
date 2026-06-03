@@ -11,12 +11,83 @@ import (
 // Provider is the wire shape served in GET /provider's `all` array (openapi
 // Provider). Env, Options, and Models are always serialized (required).
 type Provider struct {
-	ID      string                   `json:"id"`
-	Name    string                   `json:"name"`
-	Source  string                   `json:"source"`
-	Env     []string                 `json:"env"`
-	Options map[string]any           `json:"options"`
-	Models  map[string]catalog.Model `json:"models"`
+	ID      string           `json:"id"`
+	Name    string           `json:"name"`
+	Source  string           `json:"source"`
+	Env     []string         `json:"env"`
+	Options map[string]any   `json:"options"`
+	Models  map[string]Model `json:"models"`
+}
+
+// Model is opencode's transformed Model wire shape (openapi Model). It is built
+// from a raw catalog.Model via toWireModel — opencode's fromModelsDevModel
+// (provider/provider.ts:1083-1126). Unlike the raw models.dev shape, capability
+// flags live under a nested `capabilities` object and cache prices live under a
+// nested `cost.cache{read,write}`.
+type Model struct {
+	ID           string            `json:"id"`
+	ProviderID   string            `json:"providerID"`
+	Name         string            `json:"name"`
+	Family       string            `json:"family,omitempty"`
+	API          ModelAPI          `json:"api"`
+	Status       string            `json:"status"`
+	Headers      map[string]string `json:"headers"`
+	Options      map[string]any    `json:"options"`
+	Cost         ModelCost         `json:"cost"`
+	Limit        ModelLimit        `json:"limit"`
+	Capabilities ModelCapabilities `json:"capabilities"`
+	ReleaseDate  string            `json:"release_date"`
+	Variants     map[string]any    `json:"variants"`
+}
+
+// ModelAPI is the model's API descriptor (id/url/npm). url/npm fall back to the
+// provider's api/npm, then opencode's "@ai-sdk/openai-compatible" default.
+type ModelAPI struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+	NPM string `json:"npm"`
+}
+
+// ModelCost mirrors opencode's nested cost shape: flat input/output plus a
+// nested cache{read,write}.
+type ModelCost struct {
+	Input  float64        `json:"input"`
+	Output float64        `json:"output"`
+	Cache  ModelCostCache `json:"cache"`
+}
+
+// ModelCostCache is the nested cache pricing block.
+type ModelCostCache struct {
+	Read  float64 `json:"read"`
+	Write float64 `json:"write"`
+}
+
+// ModelLimit is the model's context/output token limits.
+type ModelLimit struct {
+	Context int `json:"context"`
+	Input   int `json:"input,omitempty"`
+	Output  int `json:"output"`
+}
+
+// ModelCapabilities is opencode's nested capabilities object: capability flags
+// plus per-modality input/output booleans.
+type ModelCapabilities struct {
+	Temperature bool               `json:"temperature"`
+	Reasoning   bool               `json:"reasoning"`
+	Attachment  bool               `json:"attachment"`
+	ToolCall    bool               `json:"toolcall"`
+	Input       ModelModalityFlags `json:"input"`
+	Output      ModelModalityFlags `json:"output"`
+	Interleaved bool               `json:"interleaved"`
+}
+
+// ModelModalityFlags is the per-modality boolean set under capabilities.
+type ModelModalityFlags struct {
+	Text  bool `json:"text"`
+	Audio bool `json:"audio"`
+	Image bool `json:"image"`
+	Video bool `json:"video"`
+	PDF   bool `json:"pdf"`
 }
 
 // ProviderList is the GET /provider response (provider/provider.ts ListResult).
@@ -61,7 +132,7 @@ func BuildProviderList(cat catalog.Catalog, cfg map[string]any) ProviderList {
 
 		result.All = append(result.All, Provider{
 			ID: id, Name: p.Name, Source: source,
-			Env: nonNil(p.Env), Options: map[string]any{}, Models: p.Models,
+			Env: nonNil(p.Env), Options: map[string]any{}, Models: toWireModels(p),
 		})
 		if def := lowestModelID(p.Models); def != "" {
 			result.Default[id] = def
@@ -109,6 +180,97 @@ func lowestModelID(models map[string]catalog.Model) string {
 	}
 	sort.Strings(ids)
 	return ids[0]
+}
+
+// toWireModels transforms a provider's raw catalog models into opencode's
+// transformed Model wire shape (provider/provider.ts:1083-1126).
+func toWireModels(p catalog.Provider) map[string]Model {
+	out := make(map[string]Model, len(p.Models))
+	for id, m := range p.Models {
+		out[id] = toWireModel(p, m)
+	}
+	return out
+}
+
+// toWireModel maps one catalog.Model to opencode's Model wire shape. It mirrors
+// fromModelsDevModel: flat capability flags become a nested `capabilities`
+// object, flat cache prices become nested `cost.cache{read,write}`, and api
+// url/npm fall back to the provider then "@ai-sdk/openai-compatible".
+func toWireModel(p catalog.Provider, m catalog.Model) Model {
+	url := p.API
+	npm := p.NPM
+	if npm == "" {
+		npm = "@ai-sdk/openai-compatible"
+	}
+	status := m.Status
+	if status == "" {
+		status = "active"
+	}
+
+	var cost ModelCost
+	if m.Cost != nil {
+		cost = ModelCost{
+			Input:  m.Cost.Input,
+			Output: m.Cost.Output,
+			Cache:  ModelCostCache{Read: m.Cost.CacheRead, Write: m.Cost.CacheWrite},
+		}
+	}
+
+	return Model{
+		ID:         m.ID,
+		ProviderID: p.ID,
+		Name:       m.Name,
+		Family:     m.Family,
+		API:        ModelAPI{ID: m.ID, URL: url, NPM: npm},
+		Status:     status,
+		Headers:    map[string]string{},
+		Options:    map[string]any{},
+		Cost:       cost,
+		Limit: ModelLimit{
+			Context: m.Limit.Context,
+			Input:   m.Limit.Input,
+			Output:  m.Limit.Output,
+		},
+		Capabilities: ModelCapabilities{
+			Temperature: m.Temperature,
+			Reasoning:   m.Reasoning,
+			Attachment:  m.Attachment,
+			ToolCall:    m.ToolCall,
+			Input:       modalityFlags(m.Modalities, true),
+			Output:      modalityFlags(m.Modalities, false),
+			Interleaved: false,
+		},
+		ReleaseDate: m.ReleaseDate,
+		Variants:    map[string]any{},
+	}
+}
+
+// modalityFlags converts a models.dev modality list into opencode's per-modality
+// boolean set. input=true selects the input list, otherwise the output list.
+func modalityFlags(mod *catalog.Modalities, input bool) ModelModalityFlags {
+	if mod == nil {
+		return ModelModalityFlags{}
+	}
+	list := mod.Output
+	if input {
+		list = mod.Input
+	}
+	f := ModelModalityFlags{}
+	for _, v := range list {
+		switch v {
+		case "text":
+			f.Text = true
+		case "audio":
+			f.Audio = true
+		case "image":
+			f.Image = true
+		case "video":
+			f.Video = true
+		case "pdf":
+			f.PDF = true
+		}
+	}
+	return f
 }
 
 // configProviderKeys returns the provider IDs declared in the config `provider`

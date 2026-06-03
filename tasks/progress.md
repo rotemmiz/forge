@@ -98,3 +98,4 @@ plugin, remote/tui). Start with a smaller fan-out (2–3) until the loop is prov
   - Track F perf W0 (plan 11) — agent ac6050bd4aa832f21 — new bench harness, measures opencode baseline first.
 2026-06-03 B2 MERGED → #103 (a9ef55b): LSP JSON-RPC client + diagnostics, GET /lsp + lsp.updated SSE. Deps added: go.lsp.dev/{jsonrpc2,protocol,uri}. P03-M3-4 done.
 2026-06-03 B3 dispatched (sequential after B2) — agent a2a9cd5b66cb74d87 — LSP query ops + internal/engine/tool/lsp.go (operation enum, 1→0-based, HasClients). P03-M3-5.
+2026-06-03 Track F (#105) opened + CI-green but agent STOPPED at review without merging (returned 5 should-fix findings: SSE-hang, mislabeled sub-count, p99==max, rps over-report, no ctx backstop). SendMessage unavailable → dispatched continuation agent ab2fc1e70253e9b0c to fix in the existing worktree + self-merge #105.

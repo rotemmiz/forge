@@ -19,6 +19,11 @@ const (
 	xaiAuthorizeURL = "https://auth.x.ai/oauth2/authorize"
 	xaiTokenURL     = "https://auth.x.ai/oauth2/token"
 	xaiScope        = "openid profile email offline_access grok-cli:access api:access"
+	// xaiCallbackPort is the loopback port the Grok-CLI client registered its
+	// redirect_uri against. xAI rejects redirect_uris that don't match the
+	// registered host:port, so the callback server must bind this exact port
+	// (xai.ts:36-43).
+	xaiCallbackPort = 56121
 )
 
 // xaiProvider implements Provider for xAI/Grok via the authorization-code +
@@ -27,6 +32,10 @@ type xaiProvider struct {
 	authorizeURL string
 	tokenURL     string
 	httpClient   *http.Client
+	// callbackPort overrides the registered loopback port; xaiCallbackPort in
+	// production, 0 in tests so the OS picks a free port (no fixed-port clashes
+	// between parallel test runs).
+	callbackPort int
 }
 
 func newXaiProvider() *xaiProvider {
@@ -34,10 +43,13 @@ func newXaiProvider() *xaiProvider {
 		authorizeURL: xaiAuthorizeURL,
 		tokenURL:     xaiTokenURL,
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		callbackPort: xaiCallbackPort,
 	}
 }
 
 func (p *xaiProvider) ID() string { return "xai" }
+
+func (p *xaiProvider) CallbackPort() int { return p.callbackPort }
 
 func (p *xaiProvider) Methods() []Method {
 	return []Method{
@@ -124,6 +136,8 @@ func (p *xaiProvider) postToken(ctx context.Context, form url.Values) (Token, er
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	// xAI's auth server attributes requests by User-Agent (xai.ts authHeaders).
+	req.Header.Set("User-Agent", "forge")
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return Token{}, fmt.Errorf("xai token request: %w", err)

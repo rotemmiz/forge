@@ -97,7 +97,7 @@ func (s *Service) Authorize(ctx context.Context, providerID string, methodIndex 
 		return Authorization{}, fmt.Errorf("%w: %s", ErrUnknownProvider, providerID)
 	}
 
-	port, err := s.cbServer.ensureStarted()
+	port, err := s.cbServer.ensureStarted(prov.CallbackPort())
 	if err != nil {
 		return Authorization{}, err
 	}

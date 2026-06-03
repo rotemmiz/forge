@@ -83,9 +83,32 @@ func TestRedirectURI(t *testing.T) {
 	}
 }
 
+func TestXaiRegistersFixedCallbackPort(t *testing.T) {
+	if got := newXaiProvider().CallbackPort(); got != xaiCallbackPort {
+		t.Fatalf("xai CallbackPort = %d, want %d (registered redirect_uri port)", got, xaiCallbackPort)
+	}
+}
+
+func TestEnsureStartedPortConflict(t *testing.T) {
+	s := newCallbackServer("/callback", "")
+	port, err := s.ensureStarted(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.shutdown(context.Background())
+	// Requesting the same OS-assigned port is fine.
+	if _, err := s.ensureStarted(port); err != nil {
+		t.Fatalf("re-ensure same port: %v", err)
+	}
+	// A different required port on an already-bound server is an error.
+	if _, err := s.ensureStarted(port + 1); err == nil {
+		t.Fatal("expected conflict error for a different required port")
+	}
+}
+
 func TestCallbackServerBindsLoopbackOnly(t *testing.T) {
 	s := newCallbackServer("/callback", "")
-	port, err := s.ensureStarted()
+	port, err := s.ensureStarted(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +117,7 @@ func TestCallbackServerBindsLoopbackOnly(t *testing.T) {
 		t.Fatal("port not assigned")
 	}
 	// Idempotent: second call returns same port, no rebind.
-	if p2, _ := s.ensureStarted(); p2 != port {
+	if p2, _ := s.ensureStarted(0); p2 != port {
 		t.Fatalf("ensureStarted not idempotent: %d != %d", p2, port)
 	}
 	// The listener must be on 127.0.0.1 — confirm a loopback request succeeds and
@@ -111,7 +134,7 @@ func TestCallbackServerBindsLoopbackOnly(t *testing.T) {
 
 func TestCallbackServerRejectsCSRFState(t *testing.T) {
 	s := newCallbackServer("/callback", "")
-	port, err := s.ensureStarted()
+	port, err := s.ensureStarted(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +158,7 @@ func TestCallbackServerRejectsCSRFState(t *testing.T) {
 
 func TestCallbackServerDeliversCode(t *testing.T) {
 	s := newCallbackServer("/callback", "")
-	port, err := s.ensureStarted()
+	port, err := s.ensureStarted(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +193,7 @@ func TestCallbackServerDeliversCode(t *testing.T) {
 
 func TestCallbackServerProviderError(t *testing.T) {
 	s := newCallbackServer("/callback", "")
-	port, err := s.ensureStarted()
+	port, err := s.ensureStarted(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +222,7 @@ func newTestXaiService(t *testing.T, tokenURL, authorizeURL string) *Service {
 	xp := newXaiProvider()
 	xp.tokenURL = tokenURL
 	xp.authorizeURL = authorizeURL
+	xp.callbackPort = 0 // OS-assigned port so parallel test runs never clash on 56121
 	s := &Service{
 		providers: map[string]Provider{xp.ID(): xp},
 		cbServer:  newCallbackServer("/callback", ""),

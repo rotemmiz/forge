@@ -13,6 +13,12 @@ type Provider interface {
 	ID() string
 	// Methods lists this provider's auth methods (the GET /provider/auth shape).
 	Methods() []Method
+	// CallbackPort is the fixed loopback port this provider's OAuth client
+	// registered its redirect_uri against, or 0 for "any free port". Some auth
+	// servers (e.g. xAI) reject a redirect_uri whose host:port does not match the
+	// registered client, so the callback server must bind this exact port
+	// (xai.ts:36-43).
+	CallbackPort() int
 	// Authorize starts the OAuth flow for method index `methodIndex` with the
 	// given prompt inputs. redirectURI is the loopback (or proxied) callback URL
 	// the daemon will receive the browser redirect on; the provider embeds it in

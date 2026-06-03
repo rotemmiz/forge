@@ -69,25 +69,37 @@ func newCallbackServer(path, proxyURL string) *callbackServer {
 	}
 }
 
-// ensureStarted lazily binds the loopback listener on an OS-assigned port and
-// starts serving. Idempotent: a second call returns the already-bound port.
-func (s *callbackServer) ensureStarted() (int, error) {
+// ensureStarted lazily binds the loopback listener and starts serving.
+//
+// wantPort is the provider's required fixed callback port (e.g. xAI's 56121), or
+// 0 for "any free port". The first caller binds the listener; subsequent callers
+// reuse it. If a later provider requires a different fixed port than the one
+// already bound, that is an error — a single shared loopback listener can only
+// own one port, so concurrent providers with conflicting pinned ports are not
+// supported (none ship today; revisit with a per-port listener map if needed).
+func (s *callbackServer) ensureStarted(wantPort int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.srv != nil {
+		if wantPort != 0 && wantPort != s.port {
+			return 0, fmt.Errorf("oauth callback server already bound to port %d, cannot also serve required port %d", s.port, wantPort)
+		}
 		return s.port, nil
 	}
-	// Loopback-only bind. Port 0 lets the OS pick a free port; we read it back
-	// so the redirect_uri reflects the real port.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Loopback-only bind. wantPort==0 lets the OS pick a free port; we read it
+	// back so the redirect_uri reflects the real port.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", wantPort))
 	if err != nil {
-		return 0, fmt.Errorf("oauth callback listen: %w", err)
+		return 0, fmt.Errorf("oauth callback listen on 127.0.0.1:%d: %w", wantPort, err)
 	}
 	s.port = ln.Addr().(*net.TCPAddr).Port
 	mux := http.NewServeMux()
 	mux.HandleFunc(s.path, s.handle)
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = s.srv.Serve(ln) }()
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	s.srv = srv
+	// Capture srv in the goroutine rather than re-reading s.srv: shutdown may set
+	// s.srv = nil before this goroutine runs, which would panic on a nil deref.
+	go func() { _ = srv.Serve(ln) }()
 	return s.port, nil
 }
 

@@ -35,7 +35,10 @@ func main() {
 		Theme: *themeFlag,
 	}).Restore() // restore persisted theme/model/history + enable persistence
 
-	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
+	// WithMouseCellMotion enables wheel reporting so the stream scrolls back on
+	// scroll-up (handled in Update via tea.MouseMsg). Trade-off: terminals route
+	// the wheel to the app, so native text selection needs the Shift modifier.
+	if _, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forge-tui:", err)
 		os.Exit(1)
 	}

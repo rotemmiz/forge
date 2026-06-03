@@ -325,6 +325,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		// A focused terminal captures every key (ctrl+c included, so the shell can
 		// interrupt) — only ctrl+] escapes, handled inside handlePTYKey. A pending
@@ -1115,8 +1118,30 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	return m, promptCmd(m.ctx, m.client, m.cfg.SessionID, text, m.model, m.agent)
 }
 
-// scrollStep is the lines moved per scrollback keypress.
+// scrollStep is the lines moved per scrollback keypress (and per wheel notch).
 const scrollStep = 3
+
+// handleMouse scrolls the stream on wheel up/down, mirroring pgup/pgdn. Wheel
+// events are ignored while an overlay owns the view (a focused terminal, the
+// diff reviewer, a modal, or a pending permission/question) so they don't move
+// the hidden stream underneath. The render side clamps scrollOffset to the
+// scrollback length, so an unbounded += here can't over-scroll past the top.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if (m.pty.open && m.pty.focused) || m.diff.open || m.modal != modalNone ||
+		m.pendingPermission() != nil || m.pendingQuestion() != nil {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.scrollOffset += scrollStep
+	case tea.MouseButtonWheelDown:
+		m.scrollOffset -= scrollStep
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+	}
+	return m, nil
+}
 
 // historyRecall walks the prompt history with up (dir -1, older) / down (dir +1,
 // newer). It only starts browsing from an empty composer (so a draft isn't

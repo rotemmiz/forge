@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -94,5 +95,43 @@ func TestView_ScrollChangesStreamContent(t *testing.T) {
 	}
 	if !strings.Contains(back, early) {
 		t.Errorf("scrolled-to-top view does not reveal the earliest row %q", early)
+	}
+}
+
+// TestMouseWheel_ScrollsStream verifies wheel-up scrolls back and wheel-down
+// returns toward the live tail, mirroring pgup/pgdn, and that wheel-down can't
+// drive scrollOffset negative.
+func TestMouseWheel_ScrollsStream(t *testing.T) {
+	m := longSessionModel(t)
+	up := func(mm Model) Model {
+		nm, _ := mm.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+		return nm.(Model)
+	}
+	down := func(mm Model) Model {
+		nm, _ := mm.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+		return nm.(Model)
+	}
+	m = up(up(m))
+	if m.scrollOffset != 2*scrollStep {
+		t.Fatalf("two wheel-ups: scrollOffset=%d, want %d", m.scrollOffset, 2*scrollStep)
+	}
+	m = down(m)
+	if m.scrollOffset != scrollStep {
+		t.Fatalf("wheel-down: scrollOffset=%d, want %d", m.scrollOffset, scrollStep)
+	}
+	m = down(down(m)) // past zero
+	if m.scrollOffset != 0 {
+		t.Fatalf("wheel-down past tail: scrollOffset=%d, want 0", m.scrollOffset)
+	}
+}
+
+// TestMouseWheel_IgnoredUnderOverlay verifies an open overlay (here: a modal)
+// swallows the wheel so the hidden stream doesn't move beneath it.
+func TestMouseWheel_IgnoredUnderOverlay(t *testing.T) {
+	m := longSessionModel(t)
+	m.modal = modalSessions
+	nm, _ := m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	if got := nm.(Model).scrollOffset; got != 0 {
+		t.Fatalf("wheel under modal moved stream: scrollOffset=%d, want 0", got)
 	}
 }

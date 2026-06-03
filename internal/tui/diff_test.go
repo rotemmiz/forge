@@ -265,6 +265,74 @@ func TestDiffPatchPane_RemovedRowBg(t *testing.T) {
 	}
 }
 
+// TestRenderDiffCodeLine_SignMarkers verifies that added/removed lines carry a
+// colored +/- sign marker (opencode's addedSignColor/removedSignColor) ahead of
+// the code body, context lines a blank marker, and that the marker is dropped
+// from the highlighted body (no doubled +/-).
+func TestRenderDiffCodeLine_SignMarkers(t *testing.T) {
+	m := withDiffModel(t, "forge-dark")
+	const codeWidth = 40
+
+	cases := []struct {
+		name     string
+		line     string
+		kind     diffLineKind
+		wantSign byte
+		wantBody string
+	}{
+		{"added", "+foo := bar", diffLineAdded, '+', "foo := bar"},
+		{"removed", "-foo := bar", diffLineRemoved, '-', "foo := bar"},
+		{"context space", " foo := bar", diffLineContext, ' ', "foo := bar"},
+		{"context bare", "foo := bar", diffLineContext, ' ', "foo := bar"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plain := stripANSI(m.renderDiffCodeLine(tc.line, tc.kind, codeWidth, "x.go"))
+			if len(plain) == 0 {
+				t.Fatal("rendered line is empty")
+			}
+			if plain[0] != tc.wantSign {
+				t.Errorf("sign column = %q, want %q (full: %q)", plain[0], tc.wantSign, plain)
+			}
+			body := strings.TrimRight(plain[1:], " ")
+			if body != tc.wantBody {
+				t.Errorf("body = %q, want %q", body, tc.wantBody)
+			}
+		})
+	}
+}
+
+// TestDiffPatchPane_SignMarkersPresent verifies the rendered pane carries the
+// +/- sign markers ahead of the changed code bodies (not just background tints).
+func TestDiffPatchPane_SignMarkersPresent(t *testing.T) {
+	m := withDiffModel(t, "forge-dark")
+	plain := stripANSI(m.diffPatchPane(m.width, 20))
+	lines := strings.Split(plain, "\n")
+
+	var addedSign, removedSign bool
+	for _, l := range lines {
+		// Slice off the gutter by visible columns (rune-aware: the gutter's │
+		// separator is a multi-byte rune, so byte-indexing would land mid-rune).
+		runes := []rune(l)
+		if len(runes) <= gutterTotalWidth {
+			continue
+		}
+		body := string(runes[gutterTotalWidth:])
+		if strings.HasPrefix(body, "+") && strings.Contains(body, "added_line") {
+			addedSign = true
+		}
+		if strings.HasPrefix(body, "-") && strings.Contains(body, "removed_line") {
+			removedSign = true
+		}
+	}
+	if !addedSign {
+		t.Error("added line should be prefixed with a '+' sign marker in the code column")
+	}
+	if !removedSign {
+		t.Error("removed line should be prefixed with a '-' sign marker in the code column")
+	}
+}
+
 // TestDiffPatchPane_HunkHeaderPresent verifies the @@ line is included in the
 // output and that the plain text starts with "@".
 func TestDiffPatchPane_HunkHeaderPresent(t *testing.T) {

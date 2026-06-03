@@ -40,19 +40,19 @@ Baseline status taken from `plans/00-masterplan.md` §"Review pass (2026-06-03)"
 | **P02-M1..M8** engine | message model → tools → permissions → registry | `02-agent-engine.md` §M1–M8 | engine | done | P01 | landed |
 | **P02-M9a** agent loop | core agent loop integration | `02-agent-engine.md` §M9 | engine | done | P02-M1..M8 | landed |
 | **P02-M10** compaction | context compaction | `02-agent-engine.md` §M10 | engine | done | P02-M9a | landed |
-| **P02-M9b** loop leftovers | title gen · `json_schema` structured-output tool · MAX_STEPS sentinel · agent-level `maxSteps` wiring (replace hard `const 100`) | `02-agent-engine.md` §M9 | engine | todo | P02-M9a | small, self-contained |
+| **P02-M9b** loop leftovers | title gen · `json_schema` structured-output tool · MAX_STEPS sentinel · agent-level `maxSteps` wiring (replace hard `const 100`) | `02-agent-engine.md` §M9 | engine | done | P02-M9a | landed #100 |
 | **P12-rec** record infra | recording / normalize harness | `12-test-compatibility.md` | conformance | done | P01 | landed |
-| **P12-suite** scenarios | full scenario suite + dual-run diff gate | `12-test-compatibility.md` | conformance | todo | P12-rec | **unblocks P02-M11**; parallel-safe now |
-| **P02-M11** conformance | end-to-end SSE conformance pass (Phase B exit gate) | `02-agent-engine.md` §M11 | conformance | blocked | P02-M9b, P12-suite | gates mobile/TUI repoint |
+| **P12-suite** scenarios | full scenario suite + dual-run diff gate | `12-test-compatibility.md` | conformance | done | P12-rec | landed #104 (live dual-run + 5 scenarios, skip-gated; Gemini quota caveat) |
+| **P02-M11** conformance | end-to-end SSE conformance pass (Phase B exit gate) | `02-agent-engine.md` §M11 | conformance | todo | P02-M9b, P12-suite | **READY** — gates mobile/TUI repoint; see ambiguity #2 (SSE catalog) |
 | **P06-P1** sdk pin | clients/server-stubs pinned to `openapi.json` | `06-sdk-generation.md` §Phase 1 | sdk | done | P01 | `make gen` green (verify.md S3) |
 | **P06-P2** sdk self-emit | Forge emits its own spec; diff vs frozen | `06-sdk-generation.md` §Phase 2 | sdk | blocked | P02-M11, P12-suite | ties to conformance |
 | **P03-M3-1a** mcp stdio | MCP config + stdio connect + tool merge/dispatch | `03-ecosystem-mcp-lsp.md` §M3-1 | mcp | done | P02-M1..M8 | landed (#59/#62) |
-| **P03-M3-1b** mcp remote+watch+gate | StreamableHTTP/SSE transport · `mcp.tools.changed` watcher · MCP-call permission gating | `03-ecosystem-mcp-lsp.md` §M3-1 | mcp | todo | P03-M3-1a | uses P02-M7 permissions (done) |
+| **P03-M3-1b** mcp remote+watch+gate | StreamableHTTP/SSE transport · `mcp.tools.changed` watcher · MCP-call permission gating | `03-ecosystem-mcp-lsp.md` §M3-1 | mcp | done | P03-M3-1a | landed #102 |
 | **P03-M3-2** mcp oauth | MCP OAuth flow | `03-ecosystem-mcp-lsp.md` §M3-2 | mcp | blocked | P03-M3-1b, P13-oauth | OAuth surface owned by P13 |
-| **P03-M3-3** lsp config | LSP config + built-in server table | `03-ecosystem-mcp-lsp.md` §M3-3 | lsp | todo | P02-M1..M8 | `internal/lsp/` greenfield |
-| **P03-M3-4** lsp diagnostics | LSP client — diagnostics | `03-ecosystem-mcp-lsp.md` §M3-4 | lsp | blocked | P03-M3-3 | |
-| **P03-M3-5** lsp query+tool | LSP query operations + tool | `03-ecosystem-mcp-lsp.md` §M3-5 | lsp | blocked | P03-M3-4 | |
-| **P03-M3-6** lsp/mcp sse | `lsp.updated` SSE + `mcp.tools.changed` wiring | `03-ecosystem-mcp-lsp.md` §M3-6 | lsp | blocked | P03-M3-5, P03-M3-1b | cross-track dep on mcp |
+| **P03-M3-3** lsp config | LSP config + built-in server table | `03-ecosystem-mcp-lsp.md` §M3-3 | lsp | done | P02-M1..M8 | landed #99 |
+| **P03-M3-4** lsp diagnostics | LSP client — diagnostics | `03-ecosystem-mcp-lsp.md` §M3-4 | lsp | done | P03-M3-3 | landed #103 (client + GET /lsp + lsp.updated) |
+| **P03-M3-5** lsp query+tool | LSP query operations + tool | `03-ecosystem-mcp-lsp.md` §M3-5 | lsp | done | P03-M3-4 | landed #106 (9 ops, exp-flag-gated tool) |
+| **P03-M3-6** lsp/mcp sse | `lsp.updated` SSE + `mcp.tools.changed` wiring | `03-ecosystem-mcp-lsp.md` §M3-6 | lsp | done | P03-M3-5, P03-M3-1b | landed #107 (+ real @file/@dir/@symbol ResolvePromptParts) |
 | **P05** plugin-host | Node/Bun sidecar for opencode TS plugins | `05-plugin-host.md` | plugin | todo | P02-M9a | flag-gated; currently no-op stub |
 | **P13-oauth** provider oauth | end-to-end OAuth callback/loopback (assigned owner) | `13-remote-ops.md` | remote | todo | P02-M9a | masterplan §128.4 assigns OAuth here |
 | **P13-rest** remote hardening | push notifications · packaging · remote-first hardening | `13-remote-ops.md` | remote | todo | P02-M9a | parallel-safe with P13-oauth? see notes |
@@ -75,18 +75,17 @@ These are from masterplan §"Cross-cutting ambiguities" — a worker should **es
 ## Ready set (orchestrator maintains this — recompute each cycle)
 <!-- ORCHESTRATOR: overwrite this block each cycle with the current READY tasks and their tracks. -->
 
-As of scaffold (2026-06-03), READY (deps satisfied, distinct tracks → all parallelizable):
-- **P02-M9b** (track engine)
-- **P12-suite** (track conformance) — *gated by ambiguities #1/#2; confirm contract first*
-- **P03-M3-1b** (track mcp)
-- **P03-M3-3** (track lsp)
-- **P05** (track plugin)
-- **P13-oauth** (track remote)
-- **P13-rest** (track remote) — *same track as P13-oauth → runs after it unless split*
-- **P08** (track tui)
+As of Wave-2 completion (2026-06-03, main @ 2271724). **Wave 1 + Wave 2 all merged.**
+The entire MCP+LSP chain (P03 M3-1..M3-6), conformance dual-run (P12-suite), engine M9 (P02-M9b),
+and perf W0 (plan 11) are DONE. READY now (deps satisfied, distinct tracks → parallelizable):
+- **P02-M11** (track conformance) — Phase-B exit gate; end-to-end SSE conformance. *Touches ambiguity #2 (authoritative SSE event catalog) — confirm with human before asserting the full catalog.* Gates P07-B/P06-P2.
+- **P05** (track plugin) — Node/Bun sidecar for opencode TS plugins; currently no-op stub.
+- **P13-oauth** (track remote) — provider OAuth callback/loopback (owns the OAuth surface; unblocks P03-M3-2).
+- **P13-rest** (track remote) — push-notifications/packaging/remote hardening; *same track as P13-oauth → sequential unless split*.
+- **P08** (track tui, partial) — remaining polish phases.
 
-That's up to **6 workers in parallel** across distinct tracks (engine, conformance, mcp, lsp,
-plugin, remote/tui). Start with a smaller fan-out (2–3) until the loop is proven.
+Still BLOCKED: P03-M3-2 (mcp oauth → P13-oauth), P06-P2 (sdk self-emit → P02-M11), P07-B/C (mobile → P02-M11).
+Distinct tracks → P02-M11, P05, P13-oauth, P08 are parallel-safe as a Wave 3 (4 workers). **Not yet dispatched — awaiting human go-ahead on scope + the ambiguity-#2 SSE-catalog decision that P02-M11 needs.**
 
 ## Run log
 <!-- Append one line per dispatch/merge: `2026-06-03 P03-M3-3 dispatched (worktree wt-lsp)` etc. -->
@@ -104,3 +103,4 @@ plugin, remote/tui). Start with a smaller fan-out (2–3) until the loop is prov
 2026-06-03 Track F MERGED → #105 (4ae38ac): bench/ W0 baseline harness + head-to-head vs opencode. Continuation agent fixed all 5 should-fix findings (bounded-ctx SSE, honest sub-count, interpolated p99, true-elapsed throughput, run-level deadline) + refreshed measured baseline; review clean, CI green. NOTE: both F agents stopped at review w/o merging — orchestrator drove CI-watch + squash-merge. Plan-11 W0 done.
 2026-06-03 B3 MERGED → #106 (425b816): LSP query ops (9 ops, exact opencode enum strings) + lsp engine tool (1→0-based verified, OPENCODE_EXPERIMENTAL_LSP_TOOL-gated). Self-merged cleanly. P03-M3-5 done.
 2026-06-03 B4 dispatched (final LSP track, sequential after B3) — agent a43e397c3cccceeee — M3-6 SSE bus wiring (lsp.updated + mcp.tools.changed) + real ResolvePromptParts (@file/@dir/@symbol via WorkspaceSymbol); owns engine.go/resolvePromptParts alone. Prompt hardened with explicit do-not-stop-at-review rule. P03-M3-6.
+2026-06-03 B4 MERGED → #107 (2271724): real @file/@dir/@symbol ResolvePromptParts (ported from opencode session/prompt.ts) + verified LSP/MCP SSE envelope (lsp.updated → {}, mcp.tools.changed → {server}). Self-merged after hardened do-not-stop-at-review prompt. P03-M3-6 done. ⇒ WAVE 2 COMPLETE (B2 #103, B3 #106, B4 #107, D #104, F #105).

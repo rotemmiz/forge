@@ -90,3 +90,9 @@ plugin, remote/tui). Start with a smaller fan-out (2–3) until the loop is prov
 
 ## Run log
 <!-- Append one line per dispatch/merge: `2026-06-03 P03-M3-3 dispatched (worktree wt-lsp)` etc. -->
+2026-06-03 Wave-1 fully merged & synced to main @ 674ad79 (#98 #99 #100 #101 #102); stale worktrees pruned.
+2026-06-03 docs: committed agent-owns-PR git workflow + Wave-2 scaffolding directly to main @ 3fa7b3f (user-approved, no PR).
+2026-06-03 Wave-2 dispatched in parallel (own-PR-until-merged lifecycle, self-merge):
+  - B2 LSP client/diagnostics (plan 03 M3-4) — agent ad34fce615fc99e3c — owns internal/lsp/, adds go.lsp.dev deps.
+  - Track D dual-run + scenarios (plan 12 / 02 M11) — agent aeca38799e1407058 — owns conformance/, verifies Forge↔Gemini auth gap first.
+  - Track F perf W0 (plan 11) — agent ac6050bd4aa832f21 — new bench harness, measures opencode baseline first.

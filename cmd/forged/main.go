@@ -35,6 +35,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/tool"
 	"github.com/rotemmiz/forge/internal/instance"
 	"github.com/rotemmiz/forge/internal/mdns"
+	"github.com/rotemmiz/forge/internal/oauth"
 	"github.com/rotemmiz/forge/internal/server"
 	"github.com/rotemmiz/forge/internal/session"
 	"github.com/rotemmiz/forge/internal/storage"
@@ -47,10 +48,11 @@ var version = "0.0.1"
 
 // options holds the resolved network settings (flags merged with config).
 type options struct {
-	host       string
-	port       int
-	mdns       bool
-	mdnsDomain string
+	host          string
+	port          int
+	mdns          bool
+	mdnsDomain    string
+	oauthProxyURL string
 }
 
 func main() {
@@ -58,6 +60,9 @@ func main() {
 	port := flag.Int("port", 4096, "HTTP listen port (0 = OS-assigned)")
 	enableMDNS := flag.Bool("mdns", false, "advertise the daemon over mDNS")
 	mdnsDomain := flag.String("mdns-domain", "", "mDNS host (default opencode.local)")
+	oauthProxyURL := flag.String("oauth-callback-proxy-url", "",
+		"externally reachable base URL fronting the loopback OAuth callback (remote/headless daemons); "+
+			"empty = loopback-only")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -72,10 +77,11 @@ func main() {
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
 	opts := resolveOptions(options{
-		host:       *host,
-		port:       *port,
-		mdns:       *enableMDNS,
-		mdnsDomain: *mdnsDomain,
+		host:          *host,
+		port:          *port,
+		mdns:          *enableMDNS,
+		mdnsDomain:    *mdnsDomain,
+		oauthProxyURL: *oauthProxyURL,
 	}, explicit)
 
 	if err := run(opts); err != nil {
@@ -145,6 +151,13 @@ func run(opts options) error {
 	modelCatalog := loadCatalog(baseCtx)
 	todos := tool.NewTodoStore()
 
+	// Provider OAuth service: the loopback callback server + built-in OAuth
+	// providers (plan 13). A bad --oauth-callback-proxy-url is a hard start error.
+	oauthSvc, err := oauth.NewService(opts.oauthProxyURL)
+	if err != nil {
+		return err
+	}
+
 	handler, err := server.New(server.Options{
 		Version:   version,
 		Auth:      authCfg,
@@ -158,6 +171,7 @@ func run(opts options) error {
 		Registry:  builtinRegistry(todos),
 		Todos:     todos,
 		Providers: providerFactory(modelCatalog),
+		OAuth:     oauthSvc,
 	})
 	if err != nil {
 		return err
@@ -196,7 +210,7 @@ func run(opts options) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		return shutdown(srv, instances, mdnsSvc, cancelBase)
+		return shutdown(srv, instances, mdnsSvc, oauthSvc, cancelBase)
 	}
 }
 
@@ -323,7 +337,7 @@ func startMDNS(opts options, ln net.Listener) *mdns.Service {
 // dispose instances (emits server.instance.disposed, kills PTYs), unblock the
 // long-lived streams, then drain HTTP with a 10s deadline. SQLite is closed by
 // run's deferred db.Close.
-func shutdown(srv *http.Server, instances *instance.Manager, mdnsSvc *mdns.Service, cancelBase context.CancelFunc) error {
+func shutdown(srv *http.Server, instances *instance.Manager, mdnsSvc *mdns.Service, oauthSvc *oauth.Service, cancelBase context.CancelFunc) error {
 	fmt.Fprintln(os.Stderr, "forged: shutting down")
 	mdnsSvc.Shutdown()
 	instances.DisposeAll()
@@ -331,5 +345,8 @@ func shutdown(srv *http.Server, instances *instance.Manager, mdnsSvc *mdns.Servi
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if oauthSvc != nil {
+		oauthSvc.Shutdown(shutdownCtx)
+	}
 	return srv.Shutdown(shutdownCtx)
 }

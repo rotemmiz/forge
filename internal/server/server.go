@@ -31,6 +31,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/registry"
 	"github.com/rotemmiz/forge/internal/engine/tool"
 	"github.com/rotemmiz/forge/internal/instance"
+	"github.com/rotemmiz/forge/internal/oauth"
 	"github.com/rotemmiz/forge/internal/session"
 )
 
@@ -63,6 +64,10 @@ type Options struct {
 	// BaseCtx, when set, is cancelled at the start of graceful shutdown so
 	// long-lived SSE/PTY streams unblock and the server can drain (M6).
 	BaseCtx context.Context
+	// OAuth, when set, drives the provider OAuth surface (GET /provider/auth +
+	// the authorize/callback loopback flow, plan 13). nil disables those
+	// endpoints (they fall through to the 501 placeholder).
+	OAuth *oauth.Service
 }
 
 // New builds the daemon's HTTP handler.
@@ -89,7 +94,7 @@ func New(opts Options) (http.Handler, error) {
 	reg(http.MethodGet, "/config", configHandler())
 	registerFindRoutes(reg)
 	registerResourceRoutes(reg, opts.Catalog)
-	registerProviderAuthRoutes(reg)
+	registerProviderAuthRoutes(reg, opts.OAuth)
 
 	if opts.Sessions != nil {
 		registerSessionRoutes(reg, opts.Sessions)

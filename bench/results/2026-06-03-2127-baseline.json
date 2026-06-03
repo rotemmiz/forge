@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-06-03T20:27:06Z",
+  "plan": "11-test-performance W0 baseline",
+  "machine": {
+    "os": "darwin",
+    "arch": "arm64",
+    "num_cpu": 8,
+    "go_version": "go1.26.3",
+    "hostname": "Rotems-Mac-mini.local",
+    "model": "Apple M1"
+  },
+  "config": {
+    "cold_start_iters": 20,
+    "sub_count": 50,
+    "throughput_concurrency": 16,
+    "throughput_seconds": 5,
+    "opencode_version": "1.15.12",
+    "forge_version": "0.0.1"
+  },
+  "targets": [
+    {
+      "target": "forge",
+      "cold_start_ms": {
+        "n": 20,
+        "min_ms": 50.425417,
+        "p50_ms": 68.575625,
+        "p99_ms": 70.074917,
+        "max_ms": 70.074917,
+        "mean_ms": 66.84225415,
+        "stddev_ms": 5.550594023656479
+      },
+      "idle_rss_kb": 29152,
+      "rss_with_subs_kb": 21712,
+      "sub_count": 50,
+      "sse_connect_ms": {
+        "n": 50,
+        "min_ms": 2.692375,
+        "p50_ms": 3.345041,
+        "p99_ms": 3.9395,
+        "max_ms": 3.9395,
+        "mean_ms": 3.253870799999999,
+        "stddev_ms": 0.33315211780560544
+      },
+      "health_throughput_rps": 61253.8,
+      "session_list_throughput_rps": 27372.6
+    },
+    {
+      "target": "opencode",
+      "cold_start_ms": {
+        "n": 20,
+        "min_ms": 1719.888541,
+        "p50_ms": 1777.901084,
+        "p99_ms": 1865.775875,
+        "max_ms": 1865.775875,
+        "mean_ms": 1776.7264853499996,
+        "stddev_ms": 31.207535623862476
+      },
+      "idle_rss_kb": 282880,
+      "rss_with_subs_kb": 540256,
+      "sub_count": 50,
+      "sse_connect_ms": {
+        "n": 50,
+        "min_ms": 313.428,
+        "p50_ms": 321.210833,
+        "p99_ms": 327.083042,
+        "max_ms": 327.083042,
+        "mean_ms": 320.99750916000005,
+        "stddev_ms": 4.631783137961123
+      },
+      "health_throughput_rps": 14478,
+      "session_list_throughput_rps": 1725.4
+    }
+  ],
+  "disclaimer": "Measured head-to-head on the machine named above. Numbers are real for this host only; do not generalize or cite a speed multiplier without re-running on the target hardware."
+}

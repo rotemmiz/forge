@@ -104,3 +104,8 @@ Distinct tracks → P02-M11, P05, P13-oauth, P08 are parallel-safe as a Wave 3 (
 2026-06-03 B3 MERGED → #106 (425b816): LSP query ops (9 ops, exact opencode enum strings) + lsp engine tool (1→0-based verified, OPENCODE_EXPERIMENTAL_LSP_TOOL-gated). Self-merged cleanly. P03-M3-5 done.
 2026-06-03 B4 dispatched (final LSP track, sequential after B3) — agent a43e397c3cccceeee — M3-6 SSE bus wiring (lsp.updated + mcp.tools.changed) + real ResolvePromptParts (@file/@dir/@symbol via WorkspaceSymbol); owns engine.go/resolvePromptParts alone. Prompt hardened with explicit do-not-stop-at-review rule. P03-M3-6.
 2026-06-03 B4 MERGED → #107 (2271724): real @file/@dir/@symbol ResolvePromptParts (ported from opencode session/prompt.ts) + verified LSP/MCP SSE envelope (lsp.updated → {}, mcp.tools.changed → {server}). Self-merged after hardened do-not-stop-at-review prompt. P03-M3-6 done. ⇒ WAVE 2 COMPLETE (B2 #103, B3 #106, B4 #107, D #104, F #105).
+2026-06-03 WAVE 3 dispatched (parallel, distinct tracks; hardened do-not-stop-at-review prompt; self-merge):
+  - P02-M11 conformance exit gate (plan 02 M11) — agent abff06c754797d221 — owns conformance/ (+engine SSE fixes); SSE catalog derived authoritatively from opencode source per human decision.
+  - P05 plugin host (plan 05) — agent a9f3610855c94e2b2 — Node/Bun sidecar, flag-gated; seam: cmd/forged/main.go (additive).
+  - P13-oauth provider OAuth (plan 13) — agent aaf2ce9c159e069a5 — owns OAuth surface; seam: cmd/forged/main.go + provider auth (additive).
+  - P08 TUI polish (plan 08) — agent a03c37e00c2166965 — owns internal/tui/; scoped to the NEXT single phase only.

@@ -49,13 +49,7 @@ func TestResponsesConformToSpec(t *testing.T) {
 		{name: "agent", path: "/agent", needsDir: true},
 		{name: "command", path: "/command", needsDir: true},
 		{name: "session-list", path: "/session", needsDir: true},
-		{name: "provider", path: "/provider", needsDir: true,
-			knownDivergence: "provider model wire shape: Forge serves the raw models.dev model " +
-				"(flat cost.cache_read/cache_write, attachment/reasoning/temperature/tool_call/" +
-				"modalities), but opencode's Model contract requires providerID, options, headers, " +
-				"api, capabilities, status and a nested cost.cache{read,write}. BuildProviderList " +
-				"passes catalog.Model through untransformed — a focused plan-04 task " +
-				"(conformance/known-divergences.json, scenario provider-model-shape)."},
+		{name: "provider", path: "/provider", needsDir: true},
 	}
 
 	for _, tc := range cases {

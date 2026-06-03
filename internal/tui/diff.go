@@ -291,6 +291,10 @@ const (
 	gutterSep      = "│" // vertical bar between gutter and code body
 	// gutterTotalWidth is gutterNumWidth*2 + 1 (space) + 1 (sep) + 1 (space) = 11
 	gutterTotalWidth = gutterNumWidth*2 + 3
+	// signWidth is the column between the gutter and the code body that carries
+	// the +/-/space marker (colored with Diff.HighlightAdded/Removed, mirroring
+	// opencode's addedSignColor/removedSignColor). It is 1 visible char.
+	signWidth = 1
 )
 
 // diffLineKind categorises a unified-diff source line.
@@ -335,6 +339,10 @@ func classifyDiffLine(line string) diffLineKind {
 //  4. Syntax-highlighted code bodies: each code line (sign stripped) is passed
 //     through highlightCodeBg() with the row background, so syntax fg is
 //     composed with the diff bg without transparent gaps.
+//  5. Colored +/- sign marker: renderDiffCodeLine prefixes each code body with a
+//     one-column +/-/space marker colored with Diff.HighlightAdded/Removed
+//     (opencode's addedSignColor/removedSignColor) — a colorblind-safe cue the
+//     background tint alone doesn't give.
 //
 // Anti-bleed: highlightCodeBg sets Background(rowBg) on every token style.
 // After the syntax-highlighted body we post-pad each row to exactly width with
@@ -538,9 +546,14 @@ func (m Model) renderGutter(oldLine, newLine int, kind diffLineKind) string {
 	return oldCell + spaceCell + newCell + sepCell + trailCell
 }
 
-// renderDiffCodeLine renders the code body of a single diff line: strips the
-// leading +/-/space marker, syntax-highlights the code with the row's diff
-// background, and truncates to codeWidth.
+// renderDiffCodeLine renders the code body of a single diff line: a colored
+// +/-/space sign marker followed by the syntax-highlighted code, all on the
+// row's diff background, truncated to codeWidth (sign column included).
+//
+// The leading +/- sign is colored with Diff.HighlightAdded / HighlightRemoved
+// (opencode's addedSignColor / removedSignColor — `<diff>` props in
+// routes/session/index.tsx:2212). It is the colorblind-friendly cue that the
+// background tint alone does not provide.
 //
 // For meta lines (---/+++/diff/index), the whole line is rendered in the faint
 // color (no syntax — these are not source code).
@@ -548,12 +561,14 @@ func (m Model) renderDiffCodeLine(line string, kind diffLineKind, codeWidth int,
 	s := m.styles
 	d := s.P.Diff
 
-	var rowBg lipgloss.Color
+	var rowBg, signFg lipgloss.Color
 	switch kind {
 	case diffLineAdded:
 		rowBg = d.AddedBg
+		signFg = d.HighlightAdded
 	case diffLineRemoved:
 		rowBg = d.RemovedBg
+		signFg = d.HighlightRemoved
 	case diffLineMeta:
 		// meta lines (---/+++/diff/index): faint, no highlighting
 		return lipgloss.NewStyle().
@@ -564,20 +579,41 @@ func (m Model) renderDiffCodeLine(line string, kind diffLineKind, codeWidth int,
 		rowBg = d.ContextBg
 	}
 
-	// Strip the leading marker (+/-/ ) to get the raw code.
+	// Split the leading marker (+/-/ ) from the raw code. Added/removed lines
+	// surface a colored marker; context lines pad the column with a blank space
+	// (still on rowBg) so the code body aligns across line kinds.
+	sign := " "
 	code := line
 	if len(line) > 0 {
-		code = line[1:]
+		switch kind {
+		case diffLineAdded:
+			sign = "+"
+			code = line[1:]
+		case diffLineRemoved:
+			sign = "-"
+			code = line[1:]
+		default:
+			// Context lines: drop a single leading space marker if present, but
+			// keep bare (space-less) context lines intact.
+			if strings.HasPrefix(line, " ") {
+				code = line[1:]
+			}
+		}
 	}
+	signCell := lipgloss.NewStyle().Foreground(signFg).Background(rowBg).Render(sign)
 
-	// Truncate the code to codeWidth (visible chars) before highlighting so we
-	// don't syntax-highlight characters that will be clipped. This avoids any
-	// off-by-one in ANSI-length accounting after truncation.
-	code = truncate(code, codeWidth)
+	// Truncate the code to the width left after the sign column before
+	// highlighting so we don't syntax-highlight characters that will be clipped.
+	// This avoids any off-by-one in ANSI-length accounting after truncation.
+	bodyWidth := codeWidth - signWidth
+	if bodyWidth < 1 {
+		bodyWidth = 1
+	}
+	code = truncate(code, bodyWidth)
 
 	// Syntax-highlight with the row's diff background color so every token
 	// span carries the bg — no transparent cells between tokens.
-	return highlightCodeBg(code, filename, s.P, rowBg)
+	return signCell + highlightCodeBg(code, filename, s.P, rowBg)
 }
 
 // padRow pads a rendered row string (which may contain ANSI escapes) to exactly

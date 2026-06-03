@@ -109,3 +109,4 @@ Distinct tracks → P02-M11, P05, P13-oauth, P08 are parallel-safe as a Wave 3 (
   - P05 plugin host (plan 05) — agent a9f3610855c94e2b2 — Node/Bun sidecar, flag-gated; seam: cmd/forged/main.go (additive).
   - P13-oauth provider OAuth (plan 13) — agent aaf2ce9c159e069a5 — owns OAuth surface; seam: cmd/forged/main.go + provider auth (additive).
   - P08 TUI polish (plan 08) — agent a03c37e00c2166965 — owns internal/tui/; scoped to the NEXT single phase only.
+2026-06-03 P08 MERGED → #108 (5e222da): colored +/- diff sign markers (plan 08c M6 residual). Self-merged clean. P08 stays `partial` — remaining: 08c bg-pulse (optional), 08b §3 workspaces/§8 tags (daemon-gated), 08b §4 auth (P13 lane), U13 TUI↔Forge dual-run parity (gated on P02-M11). Note: U12 PTY/VT pane already shipped (#80) — stale review row corrected.

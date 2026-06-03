@@ -66,7 +66,17 @@ go test -tags bench -run TestBaseline -count=1 -v ./bench/   # needs the BENCH_*
 - **Throughput uses a single window with keep-alive.** The throughput client bounds its connection
   pool (`MaxConnsPerHost`) so it reuses sockets instead of exhausting ephemeral ports. A 5s window is
   enough to rank the daemons but is noisier than a sustained `vegeta` ramp; absolute req/s vary
-  run-to-run while the ranking is stable.
+  run-to-run while the ranking is stable. Only 200s that complete **on or before** the deadline are
+  counted, and the rate is divided by the **true measured elapsed** (start → last counted completion),
+  not the nominal window, so a late-finishing request cannot bias req/s upward.
+- **Percentiles are linear-interpolated.** p50/p99 interpolate between the two nearest ranks rather
+  than snapping to the nearest sample. With small n (the fan-out runs ~50 subscribers) nearest-rank
+  would force p99 onto the single max observation; interpolation keeps p99 a real tail estimate.
+  Every Sample also records `n`, so the sample size behind a percentile is always visible.
+- **SSE fan-out records the actual connected count.** If fewer than the requested N subscribers reach
+  `server.connected` within the deadline, the result carries `sub_connected` (and a `notes` entry)
+  with the real count; the RSS-with-subs and connect-latency figures describe exactly that many live
+  connections, never a relabeled full-N fan-out.
 - **Pure-Go SQLite is fixed.** Per the masterplan non-negotiables and plan 11's review pass, Forge
   uses `modernc.org/sqlite`; a CGO comparison is out of scope. All SQLite numbers are within that
   constraint.

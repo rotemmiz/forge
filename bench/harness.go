@@ -119,19 +119,31 @@ func summarize(ds []time.Duration) Sample {
 	return s
 }
 
-// percentile returns the p-th percentile of a pre-sorted slice (nearest-rank).
+// percentile returns the p-th percentile of a pre-sorted slice using linear
+// interpolation between the two nearest ranks (the same method as NumPy's
+// default and Go's gonum "linear" interpolation). Nearest-rank was rejected
+// because for small n it snaps high percentiles onto the max sample by
+// construction (e.g. p99 == max for n<=50), which makes the tail estimate a
+// copy of the single worst observation rather than an interpolated estimate.
 func percentile(sorted []float64, p float64) float64 {
-	if len(sorted) == 0 {
+	n := len(sorted)
+	if n == 0 {
 		return 0
 	}
-	rank := int((p/100)*float64(len(sorted)-1) + 0.5)
-	if rank < 0 {
-		rank = 0
+	if n == 1 {
+		return sorted[0]
 	}
-	if rank >= len(sorted) {
-		rank = len(sorted) - 1
+	// Fractional rank in [0, n-1].
+	rank := (p / 100) * float64(n-1)
+	if rank <= 0 {
+		return sorted[0]
 	}
-	return sorted[rank]
+	if rank >= float64(n-1) {
+		return sorted[n-1]
+	}
+	lo := int(rank)
+	frac := rank - float64(lo)
+	return sorted[lo] + frac*(sorted[lo+1]-sorted[lo])
 }
 
 func sqrt(x float64) float64 {
@@ -154,12 +166,17 @@ type MetricResult struct {
 	ColdStart Sample `json:"cold_start_ms"`
 	// IdleRSSKB is the resident set size (process tree) at steady state.
 	IdleRSSKB int `json:"idle_rss_kb"`
-	// RSSWithSubsKB is RSS while N idle SSE subscribers are connected.
+	// RSSWithSubsKB is RSS while SubConnected idle SSE subscribers are connected.
 	RSSWithSubsKB int `json:"rss_with_subs_kb"`
-	// SubCount is the N used for the SSE fan-out + RSS-with-subs metrics.
+	// SubCount is the N requested for the SSE fan-out + RSS-with-subs metrics.
 	SubCount int `json:"sub_count"`
+	// SubConnected is how many subscribers actually reached server.connected; the
+	// RSS-with-subs and SSEConnect samples reflect THIS many live connections,
+	// not SubCount. When it is < SubCount the fan-out fell short and a note is
+	// recorded so the metric is never read as a full SubCount fan-out.
+	SubConnected int `json:"sub_connected"`
 	// SSEConnect is per-subscriber time from dial to server.connected, measured
-	// with SubCount subscribers connecting concurrently.
+	// with SubConnected subscribers connecting concurrently.
 	SSEConnect Sample `json:"sse_connect_ms"`
 	// HealthThroughput is GET /global/health requests/sec (pure router).
 	HealthThroughputRPS float64 `json:"health_throughput_rps"`
@@ -335,6 +352,23 @@ func connectSSE(ctx context.Context, t Target, release <-chan struct{}) (time.Du
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("/event status %d", resp.StatusCode)
 	}
+	// A subscriber that gets 200 but never sees server.connected would otherwise
+	// block in reader.ReadString forever — neither ctx cancellation nor closing
+	// `release` unblocks a goroutine parked in Read. Close the body when ctx (or
+	// release) fires so the blocked read returns an error and the goroutine
+	// exits; otherwise one stuck subscriber hangs wg.Wait() until the test
+	// timeout. The watcher exits via `done` on the normal return path.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-release:
+		case <-done:
+			return
+		}
+		_ = resp.Body.Close()
+	}()
 	reader := bufio.NewReader(resp.Body)
 	connected := time.Duration(0)
 	for {
@@ -363,11 +397,32 @@ func connectSSE(ctx context.Context, t Target, release <-chan struct{}) (time.Du
 	}
 }
 
+// FanoutResult is the outcome of an SSE connection fan-out measurement. It
+// records the ACTUAL number of subscribers that connected (Connected) versus the
+// number requested (Requested) so a shortfall can never be silently relabeled as
+// a full N-subscriber fan-out.
+type FanoutResult struct {
+	// Requested is the N subscribers the run asked for.
+	Requested int `json:"requested"`
+	// Connected is how many actually reached server.connected before the
+	// deadline; the RSS-with-subs sample and the latency Sample reflect exactly
+	// this many live connections, not Requested.
+	Connected int `json:"connected"`
+	// Connect is the per-subscriber dial->server.connected latency over the
+	// Connected subscribers.
+	Connect Sample `json:"connect"`
+	// RSSKB is the daemon process-tree RSS sampled while Connected subscribers
+	// were live.
+	RSSKB int `json:"rss_kb"`
+}
+
 // MeasureSSEFanout opens `n` concurrent GET /event subscriptions, records the
-// per-subscriber dial->server.connected latency, samples RSS while all `n` are
-// live, then tears them down. Returns the connect-latency sample and the
-// RSS-with-subscribers in KiB.
-func MeasureSSEFanout(ctx context.Context, t Target, n int, daemonPID int) (Sample, int, error) {
+// per-subscriber dial->server.connected latency, samples RSS while all live
+// subscribers are connected, then tears them down. If fewer than `n` connect
+// within the deadline, the result records the ACTUAL connected count (it does
+// not mislabel a partial fan-out as the full N) and the RSS/latency reflect that
+// actual count.
+func MeasureSSEFanout(ctx context.Context, t Target, n int, daemonPID int) (FanoutResult, error) {
 	// release is closed once RSS-with-subs has been sampled, freeing every
 	// subscriber to disconnect.
 	release := make(chan struct{})
@@ -378,6 +433,7 @@ func MeasureSSEFanout(ctx context.Context, t Target, n int, daemonPID int) (Samp
 	results := make([]sseConnectResult, n)
 	var wg sync.WaitGroup
 	var connectedCount int64
+	var failedCount int64
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(idx int) {
@@ -386,16 +442,32 @@ func MeasureSSEFanout(ctx context.Context, t Target, n int, daemonPID int) (Samp
 			results[idx] = sseConnectResult{d: d, err: err}
 			if err == nil {
 				atomic.AddInt64(&connectedCount, 1)
+			} else {
+				atomic.AddInt64(&failedCount, 1)
 			}
 		}(i)
 	}
 
-	// Wait until all subscribers have connected (or a deadline) before sampling.
+	// Wait until all subscribers have connected, or one fails, or the deadline
+	// elapses, before sampling. Bailing on the first failure means a daemon that
+	// can only hold a subset does not burn the whole 30s deadline.
 	deadline := time.Now().Add(30 * time.Second)
-	for atomic.LoadInt64(&connectedCount) < int64(n) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt64(&connectedCount) >= int64(n) {
+			break
+		}
+		if atomic.LoadInt64(&failedCount) > 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			closeRelease()
+			wg.Wait()
+			return FanoutResult{}, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	// Let the connections settle, then sample RSS with all subscribers live.
+	// Let the connections settle, then sample RSS with all live subscribers up.
 	time.Sleep(500 * time.Millisecond)
 	rss, rssErr := rssKB(daemonPID)
 
@@ -414,17 +486,30 @@ func MeasureSSEFanout(ctx context.Context, t Target, n int, daemonPID int) (Samp
 		ds = append(ds, r.d)
 	}
 	if len(ds) == 0 {
-		return Sample{}, 0, fmt.Errorf("no subscribers connected: %w", firstErr)
+		return FanoutResult{}, fmt.Errorf("no subscribers connected: %w", firstErr)
 	}
 	if rssErr != nil {
 		rss = 0
 	}
-	return summarize(ds), rss, nil
+	return FanoutResult{
+		Requested: n,
+		Connected: len(ds),
+		Connect:   summarize(ds),
+		RSSKB:     rss,
+	}, nil
 }
 
 // MeasureThroughput hammers `path` with `concurrency` workers for `dur` and
 // returns successful requests/sec. Non-200 responses are not counted as
 // successes but do not abort the run.
+//
+// Two honesty guards against an upward rps bias:
+//   - only completions that finish on or before the deadline are counted
+//     (a request that returns after the window does not inflate the count);
+//   - the rate is divided by the TRUE measured elapsed time, not the nominal
+//     `dur`. The measured elapsed is the last counted completion minus the
+//     start, so a window that the workers under- or over-shoot is reported at
+//     its real duration.
 func MeasureThroughput(ctx context.Context, t Target, path string, concurrency int, dur time.Duration) (float64, error) {
 	runCtx, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
@@ -441,7 +526,12 @@ func MeasureThroughput(ctx context.Context, t Target, path string, concurrency i
 	}
 	defer transport.CloseIdleConnections()
 
+	start := time.Now()
+	deadline := start.Add(dur)
 	var ok int64
+	// lastNanos tracks the elapsed-from-start (ns) of the latest counted
+	// completion, so the rate is divided by real elapsed, not the nominal dur.
+	var lastNanos int64
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
@@ -468,14 +558,39 @@ func MeasureThroughput(ctx context.Context, t Target, path string, concurrency i
 				// Drain so the connection can be reused.
 				_, _ = drainAndDiscard(resp.Body)
 				_ = resp.Body.Close()
+				done := time.Now()
+				// Do not count completions that landed after the window: they
+				// would inflate the numerator without extending the divisor.
+				if done.After(deadline) {
+					return
+				}
 				if resp.StatusCode == http.StatusOK {
 					atomic.AddInt64(&ok, 1)
+					elapsed := done.Sub(start).Nanoseconds()
+					for {
+						prev := atomic.LoadInt64(&lastNanos)
+						if elapsed <= prev || atomic.CompareAndSwapInt64(&lastNanos, prev, elapsed) {
+							break
+						}
+					}
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	return float64(atomic.LoadInt64(&ok)) / dur.Seconds(), nil
+
+	count := atomic.LoadInt64(&ok)
+	if count == 0 {
+		return 0, nil
+	}
+	// True measured elapsed: time from start to the last counted completion.
+	// Falls back to the nominal window only if the timestamp was never set
+	// (cannot happen when count>0, but keeps the divisor strictly positive).
+	elapsed := time.Duration(atomic.LoadInt64(&lastNanos))
+	if elapsed <= 0 {
+		elapsed = dur
+	}
+	return float64(count) / elapsed.Seconds(), nil
 }
 
 // MachineInfo describes the host the baseline was measured on. It is embedded in

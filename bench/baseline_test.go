@@ -92,7 +92,15 @@ func TestBaseline(t *testing.T) {
 		ForgeVersion:      captureForgeVersion(forge),
 	}
 
-	ctx := context.Background()
+	// Bound the whole run with an internal deadline so a single stuck daemon
+	// iteration fails fast against ctx.Done() rather than parking until the
+	// `go test -timeout` kills the process and loses the partial report. The
+	// cap is generous (covers warm + cold-start iters + the live suite for two
+	// daemons) but finite, so every ctx.Done() backstop in the harness actually
+	// fires. Overridable via BENCH_RUN_TIMEOUT_SECONDS.
+	runTimeout := time.Duration(envInt("BENCH_RUN_TIMEOUT_SECONDS", 600)) * time.Second
+	ctx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	defer cancelRun()
 	// Daemon stdout/stderr logs are run artifacts, not results: write them to a
 	// scratch dir (BENCH_LOG_DIR) so bench/results/ holds only the JSON + MD.
 	logDir := os.Getenv("BENCH_LOG_DIR")
@@ -125,11 +133,17 @@ func TestBaseline(t *testing.T) {
 		live := measureLive(ctx, t, tgt, subs, tpConc, time.Duration(tpSecs)*time.Second, logDir)
 		mr.IdleRSSKB = live.idleRSS
 		mr.RSSWithSubsKB = live.rssWithSubs
+		mr.SubConnected = live.subConnected
 		mr.SSEConnect = live.sseConnect
 		mr.HealthThroughputRPS = live.healthRPS
 		mr.SessionListThroughputRPS = live.sessionRPS
-		t.Logf("%s idle RSS=%dKB; sse-connect p50=%.2fms p99=%.2fms; rss+%dsubs=%dKB; health=%.0frps sessionList=%.0frps",
-			tgt.Name, live.idleRSS, live.sseConnect.P50Ms, live.sseConnect.P99Ms, subs, live.rssWithSubs, live.healthRPS, live.sessionRPS)
+		if live.subConnected < subs {
+			mr.Notes = append(mr.Notes, fmt.Sprintf(
+				"SSE fan-out reached %d/%d subscribers; rss_with_subs_kb and sse_connect_ms reflect %d live connections, not %d",
+				live.subConnected, subs, live.subConnected, subs))
+		}
+		t.Logf("%s idle RSS=%dKB; sse-connect p50=%.2fms p99=%.2fms; rss+%d/%dsubs=%dKB; health=%.0frps sessionList=%.0frps",
+			tgt.Name, live.idleRSS, live.sseConnect.P50Ms, live.sseConnect.P99Ms, live.subConnected, subs, live.rssWithSubs, live.healthRPS, live.sessionRPS)
 
 		results = append(results, mr)
 	}
@@ -160,11 +174,12 @@ func TestBaseline(t *testing.T) {
 
 // liveMetrics bundles every metric measured on the single live daemon process.
 type liveMetrics struct {
-	idleRSS     int
-	rssWithSubs int
-	sseConnect  Sample
-	healthRPS   float64
-	sessionRPS  float64
+	idleRSS      int
+	rssWithSubs  int
+	subConnected int
+	sseConnect   Sample
+	healthRPS    float64
+	sessionRPS   float64
 }
 
 // measureLive spawns one daemon instance and runs idle RSS, the SSE fan-out,
@@ -195,9 +210,14 @@ func measureLive(ctx context.Context, t *testing.T, tgt Target, subs, tpConc int
 	// SSE fan-out next: it opens long-lived connections and is sensitive to
 	// ephemeral-port pressure, so run it before the throughput load churns
 	// through short-lived sockets.
-	fanout, rssSubs, err := MeasureSSEFanout(ctx, tgt, subs, cmd.Process.Pid)
+	fanout, err := MeasureSSEFanout(ctx, tgt, subs, cmd.Process.Pid)
 	if err != nil {
 		t.Fatalf("%s sse fanout: %v", tgt.Name, err)
+	}
+	if fanout.Connected < fanout.Requested {
+		t.Logf("%s SSE fan-out shortfall: %d/%d subscribers connected; RSS+subs and "+
+			"sse-connect reflect the connected subset, not the full N",
+			tgt.Name, fanout.Connected, fanout.Requested)
 	}
 
 	tpHealth, err := MeasureThroughput(ctx, tgt, "/global/health", tpConc, tpDur)
@@ -209,11 +229,12 @@ func measureLive(ctx context.Context, t *testing.T, tgt Target, subs, tpConc int
 		t.Fatalf("%s session throughput: %v", tgt.Name, err)
 	}
 	return liveMetrics{
-		idleRSS:     idleRSS,
-		rssWithSubs: rssSubs,
-		sseConnect:  fanout,
-		healthRPS:   tpHealth,
-		sessionRPS:  tpSession,
+		idleRSS:      idleRSS,
+		rssWithSubs:  fanout.RSSKB,
+		subConnected: fanout.Connected,
+		sseConnect:   fanout.Connect,
+		healthRPS:    tpHealth,
+		sessionRPS:   tpSession,
 	}
 }
 
@@ -271,10 +292,28 @@ func renderMarkdown(r Report) string {
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", label, fstr, ostr, ratio)
 	}
+	// Label the RSS-with-subs row with the ACTUAL connected count so a shortfall
+	// is never mislabeled as the full requested N.
+	subsLabel := func(m MetricResult, has bool) string {
+		if !has || m.SubConnected == 0 {
+			return strconv.Itoa(r.Config.SubCount)
+		}
+		if m.SubConnected != r.Config.SubCount {
+			return fmt.Sprintf("%d of %d", m.SubConnected, r.Config.SubCount)
+		}
+		return strconv.Itoa(m.SubConnected)
+	}
+	rssSubsLabel := subsLabel(f, hasF)
+	if hasO {
+		if ol := subsLabel(o, hasO); ol != rssSubsLabel {
+			rssSubsLabel = fmt.Sprintf("forge %s / opencode %s", rssSubsLabel, ol)
+		}
+	}
+
 	row("Cold start p50 (ms)", f.ColdStart.P50Ms, o.ColdStart.P50Ms, "", true)
 	row("Cold start p99 (ms)", f.ColdStart.P99Ms, o.ColdStart.P99Ms, "", true)
 	row("Idle RSS (MB)", kbToMB(f.IdleRSSKB), kbToMB(o.IdleRSSKB), "", true)
-	row(fmt.Sprintf("RSS w/ %d SSE subs (MB)", r.Config.SubCount), kbToMB(f.RSSWithSubsKB), kbToMB(o.RSSWithSubsKB), "", true)
+	row(fmt.Sprintf("RSS w/ %s SSE subs (MB)", rssSubsLabel), kbToMB(f.RSSWithSubsKB), kbToMB(o.RSSWithSubsKB), "", true)
 	row("SSE connect p50 (ms)", f.SSEConnect.P50Ms, o.SSEConnect.P50Ms, "", true)
 	row("SSE connect p99 (ms)", f.SSEConnect.P99Ms, o.SSEConnect.P99Ms, "", true)
 	row("GET /global/health (req/s)", f.HealthThroughputRPS, o.HealthThroughputRPS, "", false)
@@ -282,6 +321,17 @@ func renderMarkdown(r Report) string {
 
 	fmt.Fprintf(&b, "\nRatios are derived, not asserted: a value > 1x means forge measured better on this host. ")
 	fmt.Fprintf(&b, "They are valid only for this machine and these versions.\n")
+	fmt.Fprintf(&b, "\nPercentiles (p50/p99) are linear-interpolated between ranks; with small n a p99 is an ")
+	fmt.Fprintf(&b, "interpolated tail estimate, not necessarily the max sample. ")
+	fmt.Fprintf(&b, "Throughput is successful 200s within the window divided by the true measured elapsed.\n")
+
+	// Surface any per-target notes (e.g. SSE fan-out shortfalls) so a caveat
+	// recorded in the JSON is also visible in the human-readable report.
+	for _, m := range r.Targets {
+		for _, n := range m.Notes {
+			fmt.Fprintf(&b, "\n- note (%s): %s\n", m.Target, n)
+		}
+	}
 	return b.String()
 }
 

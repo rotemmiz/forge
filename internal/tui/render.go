@@ -6,8 +6,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// contentWidth caps prose width for readability (the design's stream column).
-const maxContentWidth = 100
+// streamGutter is the breathing space kept on each side of the stream column —
+// content is inset from the left edge and from the sidebar border, mirroring
+// opencode's paddingLeft=2 / paddingRight=2 on the message column (index.tsx).
+// Per-box padding (tool boxes, user bars) sits on top of this outer inset.
+const streamGutter = 2
+
+// fallbackContentWidth is a defensive default used only before the first
+// WindowSizeMsg, when a width/column count is still unknown (≤ 0).
+const fallbackContentWidth = 80
 
 // renderSession draws the conversation stream for the selected session: a title,
 // the message blocks (user/assistant parts → user-turn/prose/thinking/tool-row),
@@ -23,22 +30,29 @@ func (m Model) renderSession() string {
 	}
 	m.streamWidth = leftW // narrows the stream/composer wrap to the left column
 
-	footer := m.composerView() + "\n" + m.statusBarView(leftW)
+	// Everything in the left column renders at the inner width (column less both
+	// gutters); the whole column is then inset by streamGutter on the left below.
+	innerW := leftW - 2*streamGutter
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	footer := m.composerView() + "\n" + m.statusBarView(innerW)
 	if ac := m.autocompleteView(); ac != "" {
 		footer = ac + "\n" + footer // popup sits just above the composer
 	}
-	if dock := m.tasksDockView(leftW); dock != "" {
+	if dock := m.tasksDockView(innerW); dock != "" {
 		footer = dock + "\n" + footer // tasks dock above the composer area
 	}
-	if sf := m.subagentFooterView(leftW); sf != "" {
+	if sf := m.subagentFooterView(innerW); sf != "" {
 		footer = sf + "\n" + footer // sub-agent context strip (plan 08b §9)
 	}
-	if pty := m.ptyPaneView(leftW); pty != "" {
+	if pty := m.ptyPaneView(innerW); pty != "" {
 		footer = pty + "\n" + footer // embedded terminal split (plan 08b §2)
 	}
 
 	sid := m.cfg.SessionID
-	header := s.Section.Render(truncate(m.sessionTitle(sid), leftW))
+	header := s.Section.Render(truncate(m.sessionTitle(sid), innerW))
 	var blocks []string
 	for _, msg := range m.store.messages[sid] {
 		if b := m.renderMessage(msg, m.store.parts[msg.ID]); b != "" {
@@ -47,7 +61,13 @@ func (m Model) renderSession() string {
 	}
 	body := header + "\n\n" + strings.Join(blocks, "\n\n")
 
+	// Inset the whole left column by the gutter on both sides (Width includes the
+	// padding in lipgloss, so the column stays exactly leftW wide and the sidebar
+	// stays flush-right). Blank padding cells are painted by the bg compositor.
 	left := m.frame(body, footer)
+	if leftW > 0 {
+		left = lipgloss.NewStyle().Width(leftW).Padding(0, streamGutter).Render(left)
+	}
 	if sidebar == "" {
 		return left
 	}
@@ -146,13 +166,17 @@ func (m Model) thinking(text string) string {
 // toolRow is defined in toolrender.go (plan 08c M7): per-tool headers,
 // collapsible output panels, and todo-list rendering.
 
+// contentWidth is the width available to stream content: the left column less the
+// gutter on both sides. No fixed cap — on a wide terminal the stream fills the
+// column between the gutters (matching opencode, which sizes content to
+// width − sidebar − padding). renderSession applies the matching left inset.
 func (m Model) contentWidth() int {
 	w := m.streamWidth // set when a sidebar narrows the stream column
 	if w == 0 {
 		w = m.width
 	}
-	if w == 0 || w > maxContentWidth {
-		w = maxContentWidth
+	if w -= 2 * streamGutter; w < 1 {
+		return 1
 	}
 	return w
 }
@@ -205,25 +229,10 @@ func (m Model) frame(body, footer string) string {
 	if avail < 1 {
 		avail = 1
 	}
-	lines := strings.Split(body, "\n")
-	if len(lines) > avail {
-		// Window the body to `avail` lines, scrolled up from the bottom by
-		// scrollOffset (clamped so we can't scroll past the top/bottom).
-		maxOff := len(lines) - avail
-		off := m.scrollOffset
-		if off > maxOff {
-			off = maxOff
-		}
-		if off < 0 {
-			off = 0
-		}
-		end := len(lines) - off
-		lines = lines[end-avail : end]
-	} else {
-		for len(lines) < avail { // pad so footer sits at the bottom
-			lines = append(lines, "")
-		}
-	}
+	// scrollregion.Window windows the body to `avail` lines at the current scroll
+	// offset (clamped to the top/bottom) and pads a short body so the footer stays
+	// pinned to the bottom row.
+	lines := m.scroll.Window(strings.Split(body, "\n"), avail)
 	return strings.Join(lines, "\n") + "\n" + footer
 }
 

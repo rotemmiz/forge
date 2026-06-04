@@ -91,7 +91,7 @@ func (m Model) openSession(id string) (Model, tea.Cmd) {
 	}
 	m.cfg.SessionID = id
 	m.screen = ScreenSession
-	m.scrollOffset = 0 // snap to the live tail of the new stream
+	m.scroll.ToTail() // snap to the live tail of the new stream
 	// loadMessagesCmd's completion also fetches this session's children, so the
 	// sub-agent footer is fresh without a second call here.
 	return m, loadMessagesCmd(m.ctx, m.client, id)
@@ -178,7 +178,7 @@ func (m Model) subagentFooterView(width int) string {
 func (m Model) subagentBar(width int, info, hint string) string {
 	s := m.styles
 	if width <= 0 {
-		width = maxContentWidth
+		width = fallbackContentWidth
 	}
 	label := lipgloss.NewStyle().Foreground(s.P.Purple).Bold(true).Render("⦿ " + info)
 	keys := s.Faint.Render(hint)

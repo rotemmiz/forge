@@ -35,6 +35,9 @@ func main() {
 		Theme: *themeFlag,
 	}).Restore() // restore persisted theme/model/history + enable persistence
 
+	// No mouse capture and no alternate-scroll mode: the input box and the
+	// terminal's native selection/copy are left completely untouched. The stream
+	// scrolls via PgUp/PgDn and Ctrl+↑/↓ (keys the composer never consumes).
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forge-tui:", err)
 		os.Exit(1)

@@ -1,8 +1,35 @@
 plugins {
+    alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.hilt)
+}
+
+kotlin {
+    androidTarget {
+        compilations.all {
+            compilerOptions.configure { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api(project(":core:model"))
+            api(project(":core:store"))
+            implementation(libs.kotlinx.coroutines.core)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        androidMain.dependencies {
+            implementation(libs.okhttp)
+            implementation(libs.okhttp.sse)
+            implementation(libs.okhttp.logging)
+            implementation(libs.kotlinx.coroutines.android)
+            implementation(libs.android.lifecycle.process)
+            implementation(libs.hilt.android)
+        }
+    }
 }
 
 android {
@@ -13,21 +40,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
-    api(project(":core:model"))
-    api(project(":core:store"))
-    implementation(libs.okhttp)
-    implementation(libs.okhttp.sse)
-    implementation(libs.okhttp.logging)
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.android.lifecycle.process)
-    implementation(libs.hilt.android)
-    kapt(libs.hilt.android.compiler)
-
-    testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.serialization.json)
-    testImplementation(libs.kotlinx.coroutines.test)
+    add("kapt", libs.hilt.android.compiler)
 }

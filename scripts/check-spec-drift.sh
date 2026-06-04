@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Spec-drift gate (task C0). Compares the spec the Forge daemon serves at GET /doc
-# against the frozen reference (conformance/openapi-reference.json).
+# Spec-drift gate (task C0 / plan 06 Phase 2). Compares the spec the Forge daemon
+# SELF-EMITS at GET /openapi.json against the frozen reference
+# (conformance/openapi-reference.json).
 #
-# A breaking difference fails the build:
-#   - an operation (method+path) in the reference is MISSING from Forge
-#   - a matched operation's set of response status codes changed
-# Extra operations Forge adds are allowed only if listed in known-additions.json;
-# otherwise they are reported as warnings.
+# /openapi.json is derived from the daemon's registered route table (internal/api/
+# spec.Emit), NOT served verbatim like /doc — so this gate has teeth: dropping a
+# handler/route or adding an unspec'd one changes the emitted spec and trips here.
+# (Fetching /doc instead would compare the frozen reference to itself.)
+#
+# Failure (exit 1) classes, per the locked conformance policy:
+#   - an operation (method+path) in the reference is MISSING from Forge   -> FAIL
+#   - a matched operation's set of response status codes changed          -> FAIL
+#   - an EXTRA operation Forge adds that is NOT in known-additions.json    -> FAIL
+# Extra operations listed in known-additions.json are reported as WARN.
 #
 # Note: opencode serves its live spec at /doc (NOT /openapi.json) —
-# server/routes/instance/httpapi/server.ts:162-167. Forge matches that.
+# server/routes/instance/httpapi/server.ts:162-167. Forge serves the verbatim
+# reference at /doc for parity, and additionally self-emits at /openapi.json (a
+# known-addition) for this gate.
 #
 # Usage: scripts/check-spec-drift.sh [forge_url]   (default http://127.0.0.1:4096)
 set -euo pipefail
@@ -26,8 +34,8 @@ if [[ ! -f "$REFERENCE" ]]; then
   exit 2
 fi
 
-if ! curl -fsS "$FORGE_URL/doc" -o "$FORGE_DOC"; then
-  echo "error: could not fetch $FORGE_URL/doc — is forged running?" >&2
+if ! curl -fsS "$FORGE_URL/openapi.json" -o "$FORGE_DOC"; then
+  echo "error: could not fetch $FORGE_URL/openapi.json — is forged running?" >&2
   exit 2
 fi
 
@@ -63,8 +71,9 @@ for key, codes in ref.items():
 
 for key in fge.keys() - ref.keys():
     if key in additions:
+        warnings.append(f"known-addition {key[0]} {key[1]}")
         continue
-    warnings.append(f"EXTRA operation not in reference or known-additions: {key[0]} {key[1]}")
+    breaking.append(f"EXTRA operation not in reference or known-additions: {key[0]} {key[1]}")
 
 for w in warnings:
     print("WARN:", w)

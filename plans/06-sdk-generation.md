@@ -622,7 +622,34 @@ file), regenerated via `make gen` (`go generate ./...` → `downconvert` to 3.0 
 Update M1/M8 and the Drift Tests block to these real paths/commands.
 
 **Note:** opencode serves its live spec at `/doc` (not `/openapi.json`); Forge's `/openapi.json` is a
-known-addition alias (`conformance/known-additions.json`). Keep that divergence recorded.
+known-addition (`conformance/known-additions.json`). Keep that divergence recorded.
+
+## Phase 2 update (2026-06-04) — route-table emission + offline drift gate BUILT
+
+The **route-table-emission** half of M10 is now built (the per-operation response-schema half remains
+as `internal/api/gen/conformance.go` + `openapi_conformance_test.go` from the prior pass).
+
+- **Self-emitted spec.** `internal/api/spec/emit.go` (`spec.Emit`) builds the served OpenAPI doc from
+  the operations the daemon **actually registered** (`server.New` now collects `regOps` as it wires
+  each route). The frozen reference's `info`/`components`/etc. are reused verbatim (so request/response
+  schemas stay identical to the contract); only `paths` is rebuilt from the route table. Operations
+  not in the reference are emitted tagged `x-forge-addition: true`. Output is deterministic.
+- **`/openapi.json` is no longer a verbatim alias of `/doc`.** `/doc` still serves the frozen reference
+  byte-for-byte (opencode parity); `/openapi.json` now serves the **route-table-derived** self-emitted
+  spec. This is what gives the drift gate teeth: dropping a `reg(...)` for a real handler whose path is
+  not in the reference, or adding an unspec'd route, changes the emitted spec and trips the gate.
+- **Offline drift gate (the teeth).** `internal/api/spec/drift.go` (`spec.CompareOps`/`Drift`) classifies
+  per the locked policy — missing operation = FAIL, changed response status codes = FAIL, additive op =
+  FAIL unless in `known-additions.json` (then WARN). `internal/server/openapi_emit_test.go` fetches the
+  live `GET /openapi.json` from a fully-wired in-memory daemon and asserts it diffs clean against the
+  frozen reference; `internal/api/spec/drift_test.go` proves the classifier actually catches
+  missing/changed/extra (not trivially passing). Both run under `go test ./...` — no running opencode.
+- **CI gate aligned.** `scripts/check-spec-drift.sh` now fetches `/openapi.json` (not `/doc`, which
+  compared the reference to itself) and FAILs on unsanctioned extras. Unimplemented operations stay
+  present (Forge registers a 501 stub for every reference op), so 501 is not a spec-absence failure —
+  matching the locked v1/sync/experimental decision.
+- **Registry.** `GET /doc` and `GET /openapi.json` are recorded in `conformance/known-additions.json`
+  (both are absent from opencode's own spec `paths`, so both surface as additive and are WARN'd).
 
 ## Links
 

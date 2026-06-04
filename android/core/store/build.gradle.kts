@@ -1,8 +1,26 @@
 plugins {
+    alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.hilt)
+}
+
+kotlin {
+    androidTarget {
+        compilations.all {
+            compilerOptions.configure { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api(project(":core:model"))
+            api(libs.kotlinx.coroutines.core)
+        }
+        androidMain.dependencies {
+            implementation(libs.hilt.android)
+        }
+    }
 }
 
 android {
@@ -13,12 +31,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
-    api(project(":core:model"))
-    api(libs.kotlinx.coroutines.android)
-    implementation(libs.hilt.android)
-    kapt(libs.hilt.android.compiler)
+    add("kapt", libs.hilt.android.compiler)
 }

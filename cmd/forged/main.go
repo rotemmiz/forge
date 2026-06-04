@@ -31,6 +31,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/llm"
 	"github.com/rotemmiz/forge/internal/engine/message"
 	"github.com/rotemmiz/forge/internal/engine/provider/anthropic"
+	"github.com/rotemmiz/forge/internal/engine/provider/credresolve"
 	"github.com/rotemmiz/forge/internal/engine/provider/openai"
 	"github.com/rotemmiz/forge/internal/engine/registry"
 	"github.com/rotemmiz/forge/internal/engine/tool"
@@ -189,7 +190,7 @@ func run(opts options) error {
 		Catalog:   modelCatalog,
 		Registry:  builtinRegistry(todos),
 		Todos:     todos,
-		Providers: providerFactory(modelCatalog),
+		Providers: providerFactory(modelCatalog, oauthSvc),
 		OAuth:     oauthSvc,
 	})
 	if err != nil {
@@ -297,10 +298,17 @@ func builtinRegistry(todos *tool.TodoStore) *registry.Registry {
 // providerFactory builds a streaming client for a provider/model. It routes to
 // the Anthropic client for Anthropic-native providers (by id or catalog npm) and
 // the OpenAI-compatible client otherwise, resolving the base URL from the catalog
-// (or FORGE_PROVIDER_BASE_URL) and the API key from the provider's advertised env
-// vars (or FORGE_PROVIDER_API_KEY).
-func providerFactory(cat catalog.Catalog) engine.ProviderFactory {
-	return func(_ context.Context, providerID, modelID string) (llm.Provider, error) {
+// (or FORGE_PROVIDER_BASE_URL).
+//
+// Credential resolution prefers a provider's OAuth access token over the static
+// API-key path, mirroring opencode's per-provider auth loader (xai.ts:575-660):
+// a provider signed in via OAuth has its access token refreshed (when stale) and
+// injected as Authorization: Bearer (xai.ts:657), overriding the env-var/api-key
+// credential; a provider with no OAuth record uses the API-key path unchanged
+// (xai.ts:596). credresolve.Resolve performs that branch via oauthSvc.Access;
+// oauthSvc may be nil (OAuth disabled), in which case only the API-key path runs.
+func providerFactory(cat catalog.Catalog, oauthSvc credresolve.Accessor) engine.ProviderFactory {
+	return func(ctx context.Context, providerID, modelID string) (llm.Provider, error) {
 		baseURL := os.Getenv("FORGE_PROVIDER_BASE_URL")
 		var apiKey, npm string
 		if prov, ok := cat[providerID]; ok {
@@ -319,10 +327,32 @@ func providerFactory(cat catalog.Catalog) engine.ProviderFactory {
 		if baseURL == "" {
 			return nil, fmt.Errorf("no base URL for provider %q (set FORGE_PROVIDER_BASE_URL)", providerID)
 		}
-		if isAnthropic(providerID, npm) {
-			return anthropic.New(anthropic.Options{BaseURL: baseURL, APIKey: apiKey, Model: modelID}), nil
+
+		// Resolve the credential: OAuth access token first, else the static API
+		// key. An ErrNeedsReauth (stored token expired, refresh failed) surfaces
+		// here so the request fails with a re-auth signal instead of calling the
+		// provider with a dead credential.
+		cred, err := credresolve.Resolve(ctx, oauthSvc, providerID, apiKey)
+		if err != nil {
+			return nil, fmt.Errorf("resolve credentials for provider %q: %w", providerID, err)
 		}
-		return openai.New(openai.Options{BaseURL: baseURL, APIKey: apiKey, Model: modelID}), nil
+
+		if isAnthropic(providerID, npm) {
+			opts := anthropic.Options{BaseURL: baseURL, Model: modelID}
+			if cred.OAuth {
+				// Anthropic OAuth (Claude Pro/Max) authenticates with
+				// Authorization: Bearer, not x-api-key — opencode swaps the header
+				// for OAuth-backed Anthropic the same way it does for xAI.
+				opts.Headers = map[string]string{"authorization": "Bearer " + cred.APIKey}
+			} else {
+				opts.APIKey = cred.APIKey
+			}
+			return anthropic.New(opts), nil
+		}
+		// OpenAI-compatible client (covers xAI, Forge's only OAuth provider today):
+		// APIKey is emitted as Authorization: Bearer, so an OAuth access token and
+		// a static api key take the same code path here.
+		return openai.New(openai.Options{BaseURL: baseURL, APIKey: cred.APIKey, Model: modelID}), nil
 	}
 }
 

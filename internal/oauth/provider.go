@@ -25,6 +25,13 @@ type Provider interface {
 	// the authorize URL. It returns the Authorization to hand to the client plus
 	// a Handshake that completes the flow once the code/redirect arrives.
 	Authorize(ctx context.Context, methodIndex int, inputs map[string]string, redirectURI string) (Authorization, *Handshake, error)
+	// Refresh exchanges a refresh token for a fresh access token via the OAuth2
+	// refresh_token grant (RFC 6749 §6). It is the at-request renewal path used by
+	// Access when a stored token is expired/near-expiry — the Go analogue of
+	// opencode's per-provider refreshAccessToken (xai.ts:188-202). It returns the
+	// new Token (with the rotated or retained refresh token) or an error if the
+	// auth server rejected the refresh.
+	Refresh(ctx context.Context, refreshToken string) (Token, error)
 }
 
 // Handshake carries the per-attempt secrets a provider needs to finish an OAuth

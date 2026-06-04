@@ -183,9 +183,17 @@ func errString(err error) string {
 // dialErrorStatus classifies a failed dial into a status. A remote OAuth server
 // whose connect failed because authentication is required reports needs_auth or
 // needs_client_registration (mcp/index.ts:360-414); everything else is "failed".
+// The metadata-discovery / DCR probe is timeout-bounded (the server's timeout, or
+// the default) so a slow auth server can't hang a GET /mcp indefinitely.
 func (m *Manager) dialErrorStatus(ctx context.Context, name string, s Server, err error) Status {
 	if s.Type == "remote" && !s.oauthDisabled() {
-		if st, ok := authStatusFromConnectError(ctx, name, s, err); ok {
+		timeout := defaultTimeout
+		if s.Timeout > 0 {
+			timeout = time.Duration(s.Timeout) * time.Millisecond
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		if st, ok := authStatusFromConnectError(probeCtx, name, s, err); ok {
 			return st
 		}
 	}

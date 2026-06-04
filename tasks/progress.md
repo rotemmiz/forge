@@ -48,7 +48,7 @@ Baseline status taken from `plans/00-masterplan.md` §"Review pass (2026-06-03)"
 | **P06-P2** sdk self-emit | Forge emits its own spec; diff vs frozen | `06-sdk-generation.md` §Phase 2 | sdk | done | P02-M11, P12-suite | landed #113 (self-emit /openapi.json from route table + 2-way drift gate; /doc+/openapi.json are known-additions) |
 | **P03-M3-1a** mcp stdio | MCP config + stdio connect + tool merge/dispatch | `03-ecosystem-mcp-lsp.md` §M3-1 | mcp | done | P02-M1..M8 | landed (#59/#62) |
 | **P03-M3-1b** mcp remote+watch+gate | StreamableHTTP/SSE transport · `mcp.tools.changed` watcher · MCP-call permission gating | `03-ecosystem-mcp-lsp.md` §M3-1 | mcp | done | P03-M3-1a | landed #102 |
-| **P03-M3-2** mcp oauth | MCP OAuth flow | `03-ecosystem-mcp-lsp.md` §M3-2 | mcp | todo | P03-M3-1b, P13-oauth | **READY** (deps done) — reuse P13 OAuth surface; add needs_auth/needs_client_registration statuses + mutating /mcp endpoints |
+| **P03-M3-2** mcp oauth | MCP OAuth flow | `03-ecosystem-mcp-lsp.md` §M3-2 | mcp | done | P03-M3-1b, P13-oauth | landed #116 (DCR+PKCE via mcp-go, tokens→shared mcp-auth.json, needs_auth/needs_client_registration, all mutating /mcp 501→real). Deferred: token-refresh dual-run gate |
 | **P03-M3-3** lsp config | LSP config + built-in server table | `03-ecosystem-mcp-lsp.md` §M3-3 | lsp | done | P02-M1..M8 | landed #99 |
 | **P03-M3-4** lsp diagnostics | LSP client — diagnostics | `03-ecosystem-mcp-lsp.md` §M3-4 | lsp | done | P03-M3-3 | landed #103 (client + GET /lsp + lsp.updated) |
 | **P03-M3-5** lsp query+tool | LSP query operations + tool | `03-ecosystem-mcp-lsp.md` §M3-5 | lsp | done | P03-M3-4 | landed #106 (9 ops, exp-flag-gated tool) |
@@ -75,18 +75,22 @@ These are from masterplan §"Cross-cutting ambiguities" — a worker should **es
 ## Ready set (orchestrator maintains this — recompute each cycle)
 <!-- ORCHESTRATOR: overwrite this block each cycle with the current READY tasks and their tracks. -->
 
-As of Wave-3 completion (2026-06-04, main @ e23fe49). **Waves 1+2+3 all merged. 🎯 PHASE B EXIT GATE GREEN (P02-M11, #111).**
-Done this wave: P02-M11 (#111), P05 (#110), P13-oauth (#109), P08 slice (#108).
-READY now (deps satisfied, distinct tracks → parallelizable) — **Wave 4 candidates**:
-- **P07-B** (track mobile) — repoint Android to the Forge daemon. Now unblocked by conformance-green. High value (mobile is the primary client).
-- **P06-P2** (track sdk) — Forge emits its own openapi spec; diff vs frozen. Unblocked.
-- **P03-M3-2** (track mcp) — MCP OAuth: reuse P13's OAuth surface; add needs_auth/needs_client_registration statuses + mutating /mcp endpoints (POST /mcp add, connect/disconnect/auth, currently 501).
-- **P13-rest** (track remote) — push-notifications / packaging / remote-first hardening.
-- **P08 / U13** (track tui, partial) — TUI↔Forge dual-run parity now unblocked (P02-M11 done); plus remaining 08c bg-pulse (optional).
+As of Wave-5 completion (2026-06-04, main @ 8e5f1f9). **Waves 1–5 all merged (#98–#116). 🎯 Phase B conformance-green; the whole planned v1 backend + ecosystem (MCP/LSP/plugins/OAuth) + both clients repointed to Forge are DONE.**
+Wave 5 merged: P06-P2 (#113), P13-rest (#114), P07-B (#115), P03-M3-2 (#116).
 
-Still BLOCKED: P07-C (mobile parity → P07-B).
-Distinct tracks → P07-B, P06-P2, P03-M3-2, P13-rest, P08 are parallel-safe (up to 5 workers). **Not yet dispatched — awaiting human go-ahead on Wave-4 scope.**
+READY now (deps satisfied, distinct tracks → parallelizable) — **Wave 6 candidates** (all polish/parity, not on a critical path):
+- **P07-C** (track mobile) — Android full parity: WS-PTY terminal, file attachments, fork/archive UI, diff viewer, push integration, KMP SDK extraction. Largest remaining slice.
+- **P08** (track tui, partial) — U12 in-TUI VT pane (needs a VT-emulator dep; WS-PTY transport exists) + GET /command ordering divergence.
+- **P07-A** (track mobile, partial) — ongoing UI-fidelity passes (independent of P07-C structurally, but SAME track → sequence behind/with P07-C).
+
+OPEN FOLLOWUPS (not yet ticketed as rows — candidates for a cleanup wave):
+- **Daemon SSE gap (conformance/engine):** Forge doesn't emit session.created/updated/deleted or message.removed — M11/Track-D never exercised session-lifecycle CRUD events, so "Phase B green" has a hole there. (Surfaced by P07-B #115.)
+- **Windows release blocked** by internal/lsp/service.go unguarded Unix syscalls (lsp track). (Surfaced by P13-rest #114.)
+- Token refresh not dual-run-gated for provider OAuth (#109) nor MCP OAuth (#116).
+- Plugin host Phase-D hook bridges still stubbed (#110); full LSP server table (~32) still subset; push/FCM (§13.8) + install-service (§13.13) deferred.
+
 Pre-existing stale PRs unrelated to these waves: #96 (tui graphics-fineness), #71 (WIP android mDNS) — flag to human, not orchestrator-owned.
+**Nothing in flight. Awaiting human go-ahead on Wave-6 scope (or a cleanup wave for the followups above).**
 
 ## Run log
 <!-- Append one line per dispatch/merge: `2026-06-03 P03-M3-3 dispatched (worktree wt-lsp)` etc. -->
@@ -130,3 +134,5 @@ Pre-existing stale PRs unrelated to these waves: #96 (tui graphics-fineness), #7
 2026-06-04 P13-rest MERGED → #114 (1f1baf2): auth hardening (constant-time compare; CheckBindExposure refuses non-loopback bind w/o password — stricter than opencode's warn), mDNS dual-advertise (_http._tcp + _opencode._tcp), packaging (goreleaser static CGO-free multi-arch + Docker/ghcr + systemd/launchd + release-on-tag CI w/ <40MB gate, ~15MB actual). Self-merged; review clean. DEFERRED→verify.md: push/FCM §13.8, install-service generator §13.13, Windows release. ⚠️ FOLLOWUP: internal/lsp/service.go uses unguarded Unix syscalls → blocks Windows target (out of P13 scope; for an lsp-track fix).
 2026-06-04 P07-B MERGED → #115 (a11a1bc): Android repointed to Forge. App SSE path was fully broken (all events → Unknown); fixed envelope unwrap (/global/event {payload,directory}), nested field reads (part-under-part, partID vs id, info-nested updates), coalesce keys; added `android` CI job (client never built in CI before). 19 unit tests; review clean. Self-merged. P07-C now READY.
   ⚠️ DAEMON FOLLOWUP (conformance/engine gap — NOT caught by P02-M11 gate): Forge does NOT emit session.created/updated/deleted or message.removed from its session handlers (only engine message/part events). App works around via REST refresh on navigation, but live SSE session-list auto-refresh needs the daemon to publish these. M11's catalog/Track-D scenarios focused on the agent message flow, not session-lifecycle CRUD events → real coverage hole in the "Phase B green" claim for those event types. Owner: conformance/engine track.
+2026-06-04 P03-M3-2 MERGED → #116 (8e5f1f9): MCP OAuth (DCR+PKCE via mark3labs/mcp-go) + persistent token store → shared $DATA/opencode/mcp-auth.json; needs_auth/needs_client_registration on GET /mcp; mutating /mcp 501→real (add/connect/disconnect/auth/auth/callback/authenticate, DELETE auth) w/ opencode error shapes. Self-merged; rebased onto #113's new spec-drift gate (routes match frozen contract); review bounded the DCR probe by server timeout. Deferred: token-refresh dual-run gate. ⇒ WAVE 5 COMPLETE (#113/#114/#115/#116).
+2026-06-04 ===== SESSION SUMMARY: Waves 2–5 dispatched & all merged — 14 PRs (#103–#116, excl. the pre-existing #96/#71). Phase B conformance-green. Whole planned v1 backend+ecosystem+clients-repointed done. Remaining: mobile Phase C parity (P07-C), TUI U12 VT pane, + the OPEN FOLLOWUPS in the Ready-set block. Stop-at-review pattern recurred ~5×; hardened carry-to-merge prompt fixed it for later agents; orchestrator drove the finish whenever an agent stalled review-clean+CI-green. =====

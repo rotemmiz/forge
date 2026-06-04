@@ -125,9 +125,12 @@ func newDriver(t *testing.T, m Model) *driver {
 	return d
 }
 
-// run executes a (possibly batched) command off the Update loop. tea.Batch and
-// tea.Sequence are unwrapped via tea.Msg replay; each leaf cmd runs in its own
-// goroutine and posts its result back to the driver's channel.
+// run executes a command off the Update loop in its own goroutine (health/SSE
+// cmds block, so they can't run inline). A tea.Batch is unwrapped into its leaf
+// cmds, each run the same way; every other result is posted to the driver's
+// channel for pump/inject to feed back through Update. The flows under test only
+// ever produce Batch/leaf cmds (never tea.Sequence), so no sequence handling is
+// needed; an unexpected sequenceMsg would surface as a pump timeout.
 func (d *driver) run(cmd tea.Cmd) {
 	if cmd == nil {
 		return

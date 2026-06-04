@@ -67,6 +67,11 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # sdk/kotlin has no Gradle wrapper (it's a standalone library module, not
+          # the Android app); pin a Gradle so the `gradle` CLI is on PATH for the
+          # compile step below.
+          gradle-version: "8.11.1"
       - name: Regenerate SDKs
         run: make gen-sdks
       - name: Assert committed SDKs are up to date

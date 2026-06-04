@@ -527,3 +527,20 @@ key, so they are manual EYEBALL items (the gemini free key is throttled):
 - [ ] EYEBALL: background the app ~60s then foreground; confirm SSE reconnects and state catches up.
 - [ ] EYEBALL: verify `Authorization: Basic …` is present on REST + SSE calls (OkHttp logging /
       Charles), and that `?auth_token=` is appended on the WS-PTY upgrade URL.
+
+## P07-C — Android WS-PTY terminal made functional (2026-06-04, plan 07 Phase C)
+The terminal pane previously dropped all output (it only handled binary WS frames, but the
+daemon streams PTY output as TEXT frames) and would have rendered raw ANSI escapes as garbage.
+This slice routes text frames through a new pure-Kotlin `TerminalEmulator` (CR/LF/BS/TAB +
+CSI cursor/erase + SGR/OSC stripping), parses the `0x00 + {cursor}` control frame for
+reconnect-resume, and reports terminal size to the daemon via `PUT /pty/{id}`. JVM unit tests
+(`TerminalEmulatorTest`, `PtyClientCursorTest`) pin the rendering + cursor contract in CI.
+Live-daemon eyeball items (need `forge serve` + a real shell):
+- [ ] EYEBALL: open a session's Terminal pane; run `ls`, `echo`, `vim`/`top` — confirm output is
+      readable (colors stripped, no `^[[…m` garbage), progress bars (`\r`) overwrite in place, and
+      backspace/tab render correctly.
+- [ ] EYEBALL: type a command + Enter; confirm keystrokes reach the shell and output streams back.
+- [ ] EYEBALL: rotate the device / show-hide the keyboard; confirm the shell re-wraps to the new
+      width (PUT /pty resize took effect — e.g. `tput cols` reflects the visible width).
+- [ ] EYEBALL: background+foreground or briefly drop the network during a terminal session and
+      confirm reconnect resumes from the last cursor without replaying the entire scrollback.

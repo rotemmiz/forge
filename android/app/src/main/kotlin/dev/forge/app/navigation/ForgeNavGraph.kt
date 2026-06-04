@@ -37,17 +37,20 @@ fun ForgeNavGraph(
     isDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
     deepLinkSessionId: String? = null,
-    onDeepLinkConsumed: (String) -> Unit = {},
+    deepLinkToken: Long = -1L,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
 
     // A push-notification tap deep-links straight to the relevant Chat screen.
-    LaunchedEffect(deepLinkSessionId) {
+    // Keyed on the tap token (not the session id) so a repeat push for the same
+    // session still re-navigates.
+    LaunchedEffect(deepLinkToken) {
         val sessionId = deepLinkSessionId ?: return@LaunchedEffect
         navController.navigate(Screen.Chat.route(sessionId)) {
             launchSingleTop = true
         }
-        onDeepLinkConsumed(sessionId)
+        onDeepLinkConsumed()
     }
 
     NavHost(navController = navController, startDestination = Screen.SessionList.route) {

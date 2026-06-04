@@ -33,8 +33,17 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var pushController: PushController
 
-    // Latest push deep-link target (session to open), updated on launch + onNewIntent.
-    private val deepLink = MutableStateFlow<PushDeepLink.Target?>(null)
+    // Latest push deep-link tap, updated on launch + onNewIntent. Wrapped in a
+    // monotonic token so repeat taps for the SAME session still re-navigate (the
+    // token changes even when the session id does not).
+    private data class DeepLinkTap(val token: Long, val target: PushDeepLink.Target)
+    private val deepLink = MutableStateFlow<DeepLinkTap?>(null)
+    private var deepLinkSeq = 0L
+
+    private fun emitDeepLink(intent: Intent?) {
+        val target = PushDeepLink.fromIntent(intent) ?: return
+        deepLink.value = DeepLinkTap(deepLinkSeq++, target)
+    }
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
@@ -42,21 +51,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        deepLink.value = PushDeepLink.fromIntent(intent)
+        emitDeepLink(intent)
         maybeRequestNotificationPermission()
         setContent {
             val darkTheme by prefs.darkTheme.collectAsState(initial = true)
             val scope = rememberCoroutineScope()
-            val target by deepLink.collectAsState()
-            val consumed = remember { mutableStateOf<String?>(null) }
-            // Emit the session id once per distinct deep-link tap.
-            val pendingSessionId = target?.sessionId?.takeIf { it != consumed.value }
+            val tap by deepLink.collectAsState()
+            val consumedToken = remember { mutableStateOf(-1L) }
+            // Surface the tap once (keyed by token, so a repeat push for the same
+            // session re-navigates). Cleared by bumping consumedToken on consume.
+            val pending = tap?.takeIf { it.token != consumedToken.value }
             ForgeTheme(darkTheme = darkTheme) {
                 ForgeNavGraph(
                     isDarkTheme = darkTheme,
                     onToggleTheme = { scope.launch { prefs.setDarkTheme(!darkTheme) } },
-                    deepLinkSessionId = pendingSessionId,
-                    onDeepLinkConsumed = { consumed.value = it },
+                    deepLinkSessionId = pending?.target?.sessionId,
+                    deepLinkToken = pending?.token ?: -1L,
+                    onDeepLinkConsumed = { consumedToken.value = pending?.token ?: -1L },
                 )
             }
         }
@@ -65,7 +76,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        PushDeepLink.fromIntent(intent)?.let { deepLink.value = it }
+        emitDeepLink(intent)
     }
 
     private fun maybeRequestNotificationPermission() {

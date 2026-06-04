@@ -255,4 +255,74 @@ cp "$REPO_ROOT/sdk/swift/.openapi-generator-ignore" "$SWIFT_OUT/.openapi-generat
 gen swift6 "$SWIFT_OUT" \
   --additional-properties="projectName=$SWIFT_PROJECT,responseAs=AsyncAwait"
 
+# --- 4. Linux-portability patch for the swift `urlsession` template ----------
+# The swift6 generator's URLSession-based infrastructure is written Apple-first
+# and does NOT compile on Linux (the CI compile gate runs `swift build` on
+# ubuntu). Three template defects, all in URLSessionImplementations.swift:
+#   (i)  `#if !os(macOS) import MobileCoreServices` — MobileCoreServices is an
+#        Apple-only framework, so on Linux (where `!os(macOS)` is true) the import
+#        fails with "no such module". Replace the OS guard with a capability check
+#        (`#if canImport(MobileCoreServices)`), which is false on Linux.
+#   (ii) the file uses `URLRequest`/`URLResponse`/`URLSession*` but never imports
+#        `FoundationNetworking`, where those types live on Linux (Foundation only
+#        re-exports them on Apple platforms). Every OTHER infra file the generator
+#        emits already has the `#if canImport(FoundationNetworking)` block; this
+#        one is missing it. Add the same block.
+#   (iii) the pre-macOS-11 `else` fallback in `mimeType(for:)` calls the legacy
+#        MobileCoreServices C API (`UTTypeCreatePreferredIdentifierForTag`,
+#        `kUTTagClass*`), which is unavailable on Linux. Guard that body with
+#        `#if canImport(MobileCoreServices)` so Linux falls through to the existing
+#        `application/octet-stream` default.
+# All three are deterministic string substitutions with an exact-match assertion,
+# so regen stays byte-identical (the freshness diff gate holds). Wire/behaviour on
+# Apple platforms is unchanged: `canImport(MobileCoreServices)` is true there, and
+# `FoundationNetworking` is absent there so its `canImport` block is skipped.
+echo "== patching swift urlsession template for Linux portability ==" >&2
+python3 - "$SWIFT_OUT/Sources/$SWIFT_PROJECT/Infrastructure/URLSessionImplementations.swift" <<'PY'
+import sys
+f = sys.argv[1]
+s = open(f).read()
+
+def sub(old, new, s):
+    n = s.count(old)
+    if n != 1:
+        sys.stderr.write(
+            "error: swift Linux patch: expected exactly 1 match for a "
+            "URLSessionImplementations.swift fragment, found %d — the swift6 "
+            "generator output drifted; re-check scripts/gen-sdks.sh step 4.\n" % n)
+        sys.exit(1)
+    return s.replace(old, new)
+
+# (i) + (ii): replace the Apple-only OS guard and add the FoundationNetworking
+# import block in one substitution anchored on `import Foundation`.
+s = sub(
+    "import Foundation\n#if !os(macOS)\nimport MobileCoreServices\n#endif",
+    "import Foundation\n"
+    "#if canImport(FoundationNetworking)\nimport FoundationNetworking\n#endif\n"
+    "#if canImport(MobileCoreServices)\nimport MobileCoreServices\n#endif",
+    s)
+
+# (iii): guard the legacy MobileCoreServices C-API fallback.
+s = sub(
+    "        } else {\n"
+    "            if let uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, pathExtension as NSString, nil)?.takeRetainedValue(),\n"
+    "                    let mimetype = UTTypeCopyPreferredTagWithClass(uti, kUTTagClassMIMEType)?.takeRetainedValue() {\n"
+    "                return mimetype as String\n"
+    "            }\n"
+    "            return \"application/octet-stream\"\n"
+    "        }",
+    "        } else {\n"
+    "            #if canImport(MobileCoreServices)\n"
+    "            if let uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, pathExtension as NSString, nil)?.takeRetainedValue(),\n"
+    "                    let mimetype = UTTypeCopyPreferredTagWithClass(uti, kUTTagClassMIMEType)?.takeRetainedValue() {\n"
+    "                return mimetype as String\n"
+    "            }\n"
+    "            #endif\n"
+    "            return \"application/octet-stream\"\n"
+    "        }",
+    s)
+
+open(f, "w").write(s)
+PY
+
 echo "SDKs generated under $OUT_DIR/sdk/{kotlin,swift}/gen" >&2

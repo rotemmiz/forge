@@ -458,3 +458,27 @@ the correction is high-value:
   decide whether Forge sorts deterministically as a known-addition).
 - **Validation:** the `--headless` structured-JSON mode + the extended plan-12 read-surface
   recordings are the right approach; just re-point the dual-run now that the endpoints exist.
+
+## U13 landed (2026-06-04) — TUI↔Forge dual-run parity gate
+
+`U13` is done. The TUI was already wire-generic (it spawns `forged`/connects to any
+HTTP+SSE daemon via the `--url` flag; default `http://127.0.0.1:4096`), so "re-pointing"
+needed no client change — every endpoint the TUI calls (`/session`, `/session/:id/message`,
+`/permission/:id/reply`, `/question/:id/{reply,reject}`, `/session/:id/{abort,summarize,fork}`,
+`/agent`, `/provider`, `/command`, `/find/file`, `/pty`) is now served by Forge, and the SSE
+event types it reduces (`message.part.{updated,delta}`, `permission.{asked,replied}`,
+`question.{asked,replied,rejected}`, `session.{updated,deleted}`) match the daemon's emitter
+field-for-field (incl. the `requestID` field on replied events).
+
+The parity gate itself lives TUI-side as `internal/tui/forge_e2e_test.go`: it boots the REAL
+`internal/server` handler wired to the agent engine + a deterministic mock provider (no LLM key,
+CI-safe) behind `httptest`, points the real TUI `Model.Update` loop at it, and asserts the core
+flows work end-to-end against **Forge** over the real wire — health + global SSE subscribe,
+session create, prompt → streamed message/part SSE rendered into the store + view, the blocking
+permission round-trip (real `permission.asked` → overlay → `POST /permission/:id/reply` →
+daemon `Ask()` unblocks), and abort. This complements the existing plan-12 read-surface
+recordings (which dual-run the TUI's GET surface vs opencode). The full-LLM dual-run remains
+`scripts/run-conformance.sh live` (skip-gated on a provider key) and is NOT depended on here.
+
+No new known-divergence: the TUI consumes only existing endpoints. `GET /command`'s
+non-deterministic ordering exclusion is unchanged.

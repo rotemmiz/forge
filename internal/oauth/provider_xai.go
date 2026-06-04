@@ -126,6 +126,30 @@ func (p *xaiProvider) exchange(ctx context.Context, code string, pkce PKCE, redi
 	return tr, nil
 }
 
+// Refresh renews the access token via the refresh_token grant (xai.ts:188-202).
+// xAI rotates the refresh_token, so the result carries whichever refresh token
+// the server returned; postToken/Access retain the old one if it is omitted.
+func (p *xaiProvider) Refresh(ctx context.Context, refreshToken string) (Token, error) {
+	if refreshToken == "" {
+		return Token{}, fmt.Errorf("xai refresh: missing refresh token")
+	}
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {xaiClientID},
+	}
+	tr, err := p.postToken(ctx, form)
+	if err != nil {
+		return Token{}, err
+	}
+	// Keep the old refresh token if the server did not rotate it (xai.ts:614 keeps
+	// the prior refresh token; same rule as mcp-go refreshToken oauth.go:321-323).
+	if tr.Refresh == "" {
+		tr.Refresh = refreshToken
+	}
+	return tr, nil
+}
+
 // postToken POSTs a form-encoded body to the token endpoint and normalizes the
 // response into a Token. expires is computed as now + expires_in (millis); 0
 // when the server omits expires_in (xai.ts best-effort expires handling).

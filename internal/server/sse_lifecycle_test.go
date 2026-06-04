@@ -167,6 +167,155 @@ func doReq(t *testing.T, srv *httptest.Server, method, path, dir string) (int, [
 	return resp.StatusCode, body
 }
 
+// doReqBody is doReq with a request body (and Content-Type: application/json),
+// used to exercise PATCH/POST endpoints.
+func doReqBody(t *testing.T, srv *httptest.Server, method, path, dir, body string) (int, []byte) {
+	t.Helper()
+	r, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Header.Set("x-opencode-directory", dir)
+	r.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return resp.StatusCode, respBody
+}
+
+// TestSessionUpdateRenameSSE asserts PATCH /session/:id renames the session,
+// returns the full updated session, and publishes session.updated{sessionID,info}
+// (opencode session.update — handlers/session.ts:180-198).
+func TestSessionUpdateRenameSSE(t *testing.T) {
+	srv, _ := lifecycleServer(t)
+	dir := t.TempDir()
+
+	_, body := doReq(t, srv, http.MethodPost, "/session", dir)
+	var created session.Info
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	coll := subscribeEvents(t, srv, dir)
+	status, body := doReqBody(t, srv, http.MethodPatch, "/session/"+created.ID, dir,
+		`{"title":"renamed"}`)
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d; body=%s", status, body)
+	}
+	var updated session.Info
+	if err := json.Unmarshal(body, &updated); err != nil {
+		t.Fatalf("decode patch response: %v", err)
+	}
+	if updated.ID != created.ID || updated.Title != "renamed" {
+		t.Errorf("patch response = %+v, want id=%s title=renamed", updated, created.ID)
+	}
+	if updated.Time.Archived != nil {
+		t.Errorf("rename set archived: %+v", updated.Time)
+	}
+	ev := coll.waitFor(t, "session.updated")
+	assertSessionEvent(t, ev, created.ID)
+}
+
+// TestSessionUpdateArchive asserts PATCH /session/:id with time.archived persists
+// the archived timestamp, and that a subsequent {time:{archived:null}} is a no-op
+// (opencode's UpdatePayload types archived as a finite number; null is dropped and
+// archived stays set — observed dual-run contract; session.ts:731, groups/session.ts:51).
+func TestSessionUpdateArchive(t *testing.T) {
+	srv, _ := lifecycleServer(t)
+	dir := t.TempDir()
+
+	_, body := doReq(t, srv, http.MethodPost, "/session", dir)
+	var created session.Info
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	status, body := doReqBody(t, srv, http.MethodPatch, "/session/"+created.ID, dir,
+		`{"time":{"archived":1717000000000}}`)
+	if status != http.StatusOK {
+		t.Fatalf("archive status = %d; body=%s", status, body)
+	}
+	var archived session.Info
+	if err := json.Unmarshal(body, &archived); err != nil {
+		t.Fatalf("decode archive: %v", err)
+	}
+	if archived.Time.Archived == nil || *archived.Time.Archived != 1717000000000 {
+		t.Errorf("archived = %v, want 1717000000000", archived.Time.Archived)
+	}
+	// GET reflects the persisted archived timestamp.
+	_, body = doReq(t, srv, http.MethodGet, "/session/"+created.ID, dir)
+	var got session.Info
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.Time.Archived == nil || *got.Time.Archived != 1717000000000 {
+		t.Errorf("persisted archived = %v, want 1717000000000", got.Time.Archived)
+	}
+
+	// {time:{archived:null}} is a no-op: opencode keeps the archived timestamp set
+	// (the schema drops a null archived; there is no un-archive path).
+	status, body = doReqBody(t, srv, http.MethodPatch, "/session/"+created.ID, dir,
+		`{"time":{"archived":null}}`)
+	if status != http.StatusOK {
+		t.Fatalf("archived-null status = %d; body=%s", status, body)
+	}
+	var afterNull session.Info
+	if err := json.Unmarshal(body, &afterNull); err != nil {
+		t.Fatalf("decode archived-null: %v", err)
+	}
+	if afterNull.Time.Archived == nil || *afterNull.Time.Archived != 1717000000000 {
+		t.Errorf("archived:null changed archived = %v, want 1717000000000 (no-op)", afterNull.Time.Archived)
+	}
+}
+
+// TestSessionUpdateNotFound asserts PATCH on a missing session 404s with the
+// standard NotFoundError envelope.
+func TestSessionUpdateNotFound(t *testing.T) {
+	srv, _ := lifecycleServer(t)
+	dir := t.TempDir()
+
+	status, body := doReqBody(t, srv, http.MethodPatch,
+		"/session/ses_nonexistent00000000000000", dir, `{"title":"x"}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", status, body)
+	}
+	var nf map[string]any
+	if err := json.Unmarshal(body, &nf); err != nil {
+		t.Fatalf("decode 404: %v", err)
+	}
+	if nf["name"] != "NotFoundError" {
+		t.Errorf("404 name = %v, want NotFoundError", nf["name"])
+	}
+}
+
+// TestSessionUpdateBadBody asserts a malformed JSON body 400s with {name:"BadRequest"}.
+func TestSessionUpdateBadBody(t *testing.T) {
+	srv, _ := lifecycleServer(t)
+	dir := t.TempDir()
+
+	_, body := doReq(t, srv, http.MethodPost, "/session", dir)
+	var created session.Info
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+
+	status, respBody := doReqBody(t, srv, http.MethodPatch, "/session/"+created.ID, dir,
+		`{"title":`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", status, respBody)
+	}
+	var be map[string]any
+	if err := json.Unmarshal(respBody, &be); err != nil {
+		t.Fatalf("decode 400: %v", err)
+	}
+	if be["name"] != "BadRequest" {
+		t.Errorf("400 name = %v, want BadRequest", be["name"])
+	}
+}
+
 // assertSessionEvent verifies a session lifecycle event carries the opencode
 // {sessionID, info:{id,...}} shape with info.id == sessionID.
 func assertSessionEvent(t *testing.T, ev map[string]any, wantSessionID string) {

@@ -39,6 +39,7 @@ import (
 	"github.com/rotemmiz/forge/internal/mdns"
 	"github.com/rotemmiz/forge/internal/oauth"
 	"github.com/rotemmiz/forge/internal/pluginbridge"
+	"github.com/rotemmiz/forge/internal/push"
 	"github.com/rotemmiz/forge/internal/server"
 	"github.com/rotemmiz/forge/internal/session"
 	"github.com/rotemmiz/forge/internal/storage"
@@ -56,6 +57,11 @@ type options struct {
 	mdns          bool
 	mdnsDomain    string
 	oauthProxyURL string
+	// fcmServiceAccount is the path to a Google service-account JSON key enabling
+	// the push relay (plan 13 §13.8). Empty ⇒ push relay runs in no-op mode
+	// (device registration persists but no FCM send is attempted). Resolved from
+	// --fcm-service-account or FORGE_FCM_SERVICE_ACCOUNT.
+	fcmServiceAccount string
 	// pluginHost enables the flag-gated opencode-plugin sidecar (plan 05). Off
 	// by default; never affects the default daemon path.
 	pluginHost bool
@@ -69,6 +75,9 @@ func main() {
 	oauthProxyURL := flag.String("oauth-callback-proxy-url", "",
 		"externally reachable base URL fronting the loopback OAuth callback (remote/headless daemons); "+
 			"empty = loopback-only")
+	fcmServiceAccount := flag.String("fcm-service-account", "",
+		"path to a Google service-account JSON key enabling FCM push (plan 13 §13.8); "+
+			"empty = push relay disabled (registration still persists)")
 	pluginHost := flag.Bool("plugin-host", false, "enable the opencode-plugin host sidecar (plan 05; off by default)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -84,12 +93,13 @@ func main() {
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
 	opts := resolveOptions(options{
-		host:          *host,
-		port:          *port,
-		mdns:          *enableMDNS,
-		mdnsDomain:    *mdnsDomain,
-		oauthProxyURL: *oauthProxyURL,
-		pluginHost:    *pluginHost || os.Getenv("FORGE_PLUGIN_HOST") == "1",
+		host:              *host,
+		port:              *port,
+		mdns:              *enableMDNS,
+		mdnsDomain:        *mdnsDomain,
+		oauthProxyURL:     *oauthProxyURL,
+		fcmServiceAccount: firstNonEmpty(*fcmServiceAccount, os.Getenv("FORGE_FCM_SERVICE_ACCOUNT")),
+		pluginHost:        *pluginHost || os.Getenv("FORGE_PLUGIN_HOST") == "1",
 	}, explicit)
 
 	if err := run(opts); err != nil {
@@ -178,6 +188,17 @@ func run(opts options) error {
 		return err
 	}
 
+	// Push relay (plan 13 §13.8). The device-registration store is always wired
+	// so a mobile client can register before FCM is configured; the relay only
+	// sends when a service account is present (no-op mode otherwise). A bad
+	// service-account key is a hard start error so misconfiguration is loud.
+	pushStore := push.NewStore(db.DB)
+	pushRelay, err := newPushRelay(opts.fcmServiceAccount, pushStore, globalBus)
+	if err != nil {
+		return err
+	}
+	go pushRelay.Run(baseCtx)
+
 	handler, err := server.New(server.Options{
 		Version:   version,
 		Auth:      authCfg,
@@ -192,6 +213,7 @@ func run(opts options) error {
 		Todos:     todos,
 		Providers: providerFactory(modelCatalog, oauthSvc),
 		OAuth:     oauthSvc,
+		Push:      pushStore,
 	})
 	if err != nil {
 		return err
@@ -268,6 +290,35 @@ func registerPluginHost(baseCtx context.Context, instances *instance.Manager, ad
 		return b
 	})
 	log.Printf("plugin host enabled (plan 05); plugins load per instance")
+}
+
+// newPushRelay builds the FCM push relay (plan 13 §13.8). When saPath is empty
+// the relay runs in no-op mode (no FCM send; device registration still
+// persists). When set, the service-account JSON is loaded and parsed eagerly so
+// a misconfigured key fails startup loudly rather than silently disabling push.
+func newPushRelay(saPath string, store *push.Store, global *bus.Global) (*push.Relay, error) {
+	if saPath == "" {
+		return push.NewRelay(store, nil, global, nil), nil
+	}
+	saJSON, err := os.ReadFile(saPath)
+	if err != nil {
+		return nil, fmt.Errorf("read FCM service account %q: %w", saPath, err)
+	}
+	sender, err := push.NewFCMSender(saJSON)
+	if err != nil {
+		return nil, fmt.Errorf("FCM service account %q: %w", saPath, err)
+	}
+	return push.NewRelay(store, sender, global, nil), nil
+}
+
+// firstNonEmpty returns the first non-empty string among its arguments.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // loadCatalog resolves the models.dev catalog at startup (live, with on-disk

@@ -14,6 +14,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/registry"
 	"github.com/rotemmiz/forge/internal/engine/tool"
 	"github.com/rotemmiz/forge/internal/instance"
+	"github.com/rotemmiz/forge/internal/push"
 	"github.com/rotemmiz/forge/internal/session"
 	"github.com/rotemmiz/forge/internal/storage"
 )
@@ -49,6 +50,7 @@ func fullyWiredServer(t *testing.T) http.Handler {
 		Todos:     todos,
 		Global:    g,
 		Providers: func(context.Context, string, string) (llm.Provider, error) { return nil, nil },
+		Push:      push.NewStore(db.DB),
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)

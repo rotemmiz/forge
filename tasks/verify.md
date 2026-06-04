@@ -558,3 +558,25 @@ Live-daemon eyeball items (need `forge serve` + a real shell):
 - [ ] EYEBALL: with the app open on the session list, archive/rename the SAME session from another
       client (or curl PATCH /session/{id}); confirm the list updates live via the session.updated SSE
       (no manual refresh).
+
+## P13-FCM — Daemon-side push-notification relay (2026-06-04, plan 13 §13.8)
+A new `internal/push` package adds FCM push: device-token registration
+(`POST/GET/DELETE /push/register[/{deviceID}]`, Forge known-additions, spec-gated and
+recorded in `conformance/known-additions.json`), an event→notification mapping
+(`session.idle`→"Agent finished", `permission.asked`→"Permission needed",
+`question.asked`→"Agent has a question"), and an FCM HTTP v1 dispatcher that fires only when
+no SSE client is connected. Without `--fcm-service-account` / `FORGE_FCM_SERVICE_ACCOUNT` the
+relay is a no-op (registration still persists; no send; daemon + CI run clean). The store CRUD,
+event mapping, no-client gating, per-device-per-session rate limit, unregistered-token pruning,
+and the FCM JWT/send flow (against a stub) are unit-tested. The LIVE FCM send needs real
+infra (a Firebase project + service-account key + a physical Android device with an FCM token),
+so it is MANUAL-VERIFY:
+- [ ] EYEBALL: create a Firebase project, download its service-account JSON, start
+      `forged --fcm-service-account /path/key.json`; confirm the log says "push relay enabled".
+- [ ] EYEBALL: register a real device token via `POST /push/register`, then with NO SSE client
+      connected drive an agent to idle (or trigger a permission/question); confirm a push notification
+      arrives on the Android device with the mapped title/body and a `data.session_id` that deep-links.
+- [ ] EYEBALL: connect an SSE client (`GET /event` or `/global/event`) and repeat; confirm NO push is
+      sent while a client is actively connected.
+- [ ] EYEBALL: with a stale/invalid FCM token registered, trigger a push; confirm the daemon logs
+      "pruning unregistered token" and the device row is removed (`GET /push/register` no longer lists it).

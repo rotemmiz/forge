@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -58,15 +60,29 @@ fun TerminalScreen(
         ) {
             // Scrolling terminal output
             val scrollState = rememberScrollState()
+            val density = LocalDensity.current
 
-            LaunchedEffect(viewModel.lines.size) {
+            // Auto-scroll to the bottom whenever the emulator mutates (revision bumps).
+            LaunchedEffect(viewModel.revision) {
                 scrollState.animateScrollTo(scrollState.maxValue)
             }
+
+            // Estimate visible rows/cols from the viewport and report to the daemon
+            // so shell wrapping and progress bars match what the user sees.
+            val charWidthPx = with(density) { (12.sp.toPx()) * 0.6f } // mono advance ≈ 0.6em
+            val rowHeightPx = with(density) { 16.sp.toPx() }
 
             Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .onSizeChanged { size ->
+                        if (charWidthPx > 0f && rowHeightPx > 0f) {
+                            val cols = (size.width / charWidthPx).toInt()
+                            val rows = (size.height / rowHeightPx).toInt()
+                            viewModel.resize(rows, cols)
+                        }
+                    }
                     .verticalScroll(scrollState)
                     .padding(8.dp),
             ) {

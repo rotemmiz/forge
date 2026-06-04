@@ -216,22 +216,45 @@ class ForgeClient @Inject constructor(
 
     /**
      * Opens a WebSocket connection to the PTY session and returns a [PtyClient].
-     * ws://host/pty/{ptyId}/connect?auth_token=<base64>
-     * The auth_token is base64(user:pass) or base64(:token).
+     * `ws://host/pty/{ptyId}/connect?auth_token=<base64>[&cursor=<n>]`
+     *
+     * The auth_token is base64(user:pass) or base64(:token). [cursor] resumes the
+     * stream from an absolute UTF-16 code-unit offset (`-1` = current end, `0` =
+     * full replay — the server default); pass the last cursor seen on reconnect to
+     * avoid re-replaying the whole buffer (`internal/server/pty_ws.go` parseCursor).
      */
-    fun connectPty(ptyId: String, authToken: String): PtyClient {
+    fun connectPty(ptyId: String, authToken: String, cursor: Long? = null): PtyClient {
         val base = baseUrl?.trimEnd('/') ?: error("No server configured")
         // Replace http(s):// with ws(s)://
         val wsBase = base
             .replace(Regex("^https://"), "wss://")
             .replace(Regex("^http://"), "ws://")
-        val url = "$wsBase/pty/$ptyId/connect?auth_token=${URLEncoder.encode(authToken, "UTF-8")}"
-        val channel = Channel<ByteArray>(Channel.UNLIMITED)
-        val listener = PtyClient.createListener(channel)
+        val url = buildString {
+            append("$wsBase/pty/$ptyId/connect?auth_token=${URLEncoder.encode(authToken, "UTF-8")}")
+            if (cursor != null) append("&cursor=$cursor")
+        }
+        val output = Channel<String>(Channel.UNLIMITED)
+        val cursorCh = Channel<Long>(Channel.CONFLATED)
+        val listener = PtyClient.createListener(output, cursorCh)
         val request = Request.Builder().url(url).build()
         val ws = httpClient.newWebSocket(request, listener)
-        return PtyClient(ws, channel)
+        return PtyClient(ws, output, cursorCh)
     }
+
+    /**
+     * Resizes the PTY's terminal window. `PUT /pty/{ptyId}` with `{"size":{"rows","cols"}}`
+     * (`internal/pty/pty.go` UpdateInput / Size, mirrors opencode `pty/index.ts:80-90`).
+     * Best-effort: the keyboard-driven mobile terminal sends this on layout changes.
+     */
+    suspend fun resizePty(ptyId: String, rows: Int, cols: Int) = put(
+        path = "/pty/$ptyId",
+        body = buildJsonObject {
+            put("size", buildJsonObject {
+                put("rows", rows)
+                put("cols", cols)
+            })
+        },
+    ) { _ -> Unit }
 
     // ─── Diff ─────────────────────────────────────────────────────────────────
 
@@ -375,6 +398,25 @@ class ForgeClient @Inject constructor(
         httpClient.newCall(req).execute().use { resp ->
             val respBody = resp.body?.string() ?: "{}"
             if (!resp.isSuccessful) error("HTTP ${resp.code} for PATCH $path: $respBody")
+            val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
+            parse(elem)
+        }
+    }
+
+    private suspend fun <T> put(
+        path: String,
+        body: JsonObject,
+        directory: String? = null,
+        parse: (JsonElement) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val url = buildUrl(path, null)
+        val reqBody = body.toString().toRequestBody(JSON_MEDIA)
+        val req = Request.Builder().url(url).put(reqBody).also {
+            directory?.let { d -> it.header("X-Opencode-Directory", URLEncoder.encode(d, "UTF-8")) }
+        }.build()
+        httpClient.newCall(req).execute().use { resp ->
+            val respBody = resp.body?.string() ?: "{}"
+            if (!resp.isSuccessful) error("HTTP ${resp.code} for PUT $path: $respBody")
             val elem = try { ForgeJson.parseToJsonElement(respBody) } catch (_: Exception) { JsonObject(emptyMap()) }
             parse(elem)
         }

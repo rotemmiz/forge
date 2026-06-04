@@ -1,4 +1,7 @@
 [
   ["GET", "/doc"],
-  ["GET", "/openapi.json"]
+  ["GET", "/openapi.json"],
+  ["POST", "/push/register"],
+  ["DELETE", "/push/register/{deviceID}"],
+  ["GET", "/push/register"]
 ]

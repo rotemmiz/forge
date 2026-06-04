@@ -34,6 +34,7 @@ import (
 	"github.com/rotemmiz/forge/internal/engine/tool"
 	"github.com/rotemmiz/forge/internal/instance"
 	"github.com/rotemmiz/forge/internal/oauth"
+	"github.com/rotemmiz/forge/internal/push"
 	"github.com/rotemmiz/forge/internal/session"
 )
 
@@ -70,6 +71,11 @@ type Options struct {
 	// the authorize/callback loopback flow, plan 13). nil disables those
 	// endpoints (they fall through to the 501 placeholder).
 	OAuth *oauth.Service
+	// Push, when set, backs the FCM device-registration endpoints (/push/*,
+	// plan 13 §13.8). nil disables those endpoints (they fall through to the 501
+	// placeholder). Registration persists regardless of whether FCM credentials
+	// are configured; live delivery is handled by the relay (cmd/forged).
+	Push *push.Store
 }
 
 // New builds the daemon's HTTP handler.
@@ -126,7 +132,7 @@ func New(opts Options) (http.Handler, error) {
 		registerPromptRoutes(reg, opts)
 	}
 	if opts.Instances != nil {
-		reg(http.MethodGet, "/event", instanceEventHandler(opts.BaseCtx, opts.Instances))
+		reg(http.MethodGet, "/event", instanceEventHandler(opts.BaseCtx, opts.Instances, opts.Global))
 		registerPtyRoutes(reg, opts.Instances)
 		reg(http.MethodGet, "/pty/{ptyID}/connect", ptyConnectHandler(opts.BaseCtx, opts.Instances))
 		registerPermissionRoutes(reg, opts.Instances)
@@ -139,6 +145,9 @@ func New(opts Options) (http.Handler, error) {
 	}
 	if opts.Global != nil {
 		reg(http.MethodGet, "/global/event", globalEventHandler(opts.BaseCtx, opts.Global))
+	}
+	if opts.Push != nil {
+		registerPushRoutes(reg, opts.Push)
 	}
 
 	ops, err := spec.Operations()

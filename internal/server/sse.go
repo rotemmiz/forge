@@ -60,12 +60,19 @@ func writeSSE(w http.ResponseWriter, fl http.Flusher, v any) bool {
 // {id,type,properties} events: server.connected first, then live events merged
 // with a 10s heartbeat, terminating on server.instance.disposed
 // (handlers/event.ts).
-func instanceEventHandler(base context.Context, mgr *instance.Manager) http.HandlerFunc {
+//
+// global, when non-nil, is the process-global bus; the handler marks a client
+// connected for its lifetime so the push relay knows a client is live and
+// suppresses push (plan 13 §13.8).
+func instanceEventHandler(base context.Context, mgr *instance.Manager, global *bus.Global) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fl, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
+		}
+		if global != nil {
+			defer global.ClientConnected()()
 		}
 		inst := mgr.Get(DirectoryFromContext(r.Context()))
 		// Subscribe BEFORE sending server.connected so no publish is lost in the
@@ -116,6 +123,7 @@ func globalEventHandler(base context.Context, global *bus.Global) http.HandlerFu
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
+		defer global.ClientConnected()()
 		events, unsubscribe := global.Subscribe()
 		defer unsubscribe()
 

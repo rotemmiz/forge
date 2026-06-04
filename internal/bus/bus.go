@@ -109,11 +109,42 @@ type Global struct {
 	mu   sync.Mutex
 	subs map[int]chan GlobalEvent
 	next int
+	// clients counts active client SSE connections (instance + global /event
+	// streams). The push relay subscribes to the global bus directly (which does
+	// NOT increment this counter), so it can read clients to decide whether a
+	// client is actively connected — push is only sent when clients == 0
+	// (plan 13 §13.8: "Push covers it when the client is backgrounded or
+	// offline").
+	clients int
 }
 
 // NewGlobal creates an empty global bus.
 func NewGlobal() *Global {
 	return &Global{subs: make(map[int]chan GlobalEvent)}
+}
+
+// ClientConnected increments the active-client counter; the returned func
+// decrements it (call once, e.g. via defer). SSE handlers wrap a client stream
+// in this so the push relay can tell whether any client is currently connected.
+func (g *Global) ClientConnected() func() {
+	g.mu.Lock()
+	g.clients++
+	g.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			g.mu.Lock()
+			g.clients--
+			g.mu.Unlock()
+		})
+	}
+}
+
+// Clients returns the number of active client SSE connections.
+func (g *Global) Clients() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.clients
 }
 
 // Subscribe registers a global subscriber and returns its channel + unsubscribe.

@@ -8,8 +8,10 @@
 //
 // Real endpoints:
 //   - GET /global/health -> {healthy:true, version} (handlers/global.ts:76)
-//   - GET /doc (+ /openapi.json alias) -> embedded OpenAPI reference
+//   - GET /doc -> embedded OpenAPI reference, served verbatim
 //     (server/routes/instance/httpapi/server.ts:162-167)
+//   - GET /openapi.json -> Forge-self-emitted spec derived from the route table
+//     (a known-addition; opencode has no such endpoint — plan 06 Phase 2 / M10)
 //   - GET /config -> merged opencode-format config (M1)
 //   - session CRUD (M2): see session_handlers.go
 package server
@@ -79,18 +81,39 @@ func New(opts Options) (http.Handler, error) {
 	r.Use(opts.Auth.Middleware)
 	r.Use(directoryMiddleware(opts.Cwd))
 
+	// registered tracks every (method, path) the daemon actually wires, and regOps
+	// records them in registration order. They are the source for the
+	// self-emitted OpenAPI spec served at /openapi.json (plan 06 Phase 2 / M10):
+	// the served spec is derived from this route table — not a static blob — so
+	// removing or re-pathing a handler changes the emitted spec and the drift gate
+	// catches it.
 	registered := map[string]bool{}
+	var regOps []spec.Operation
 	reg := func(method, path string, h http.HandlerFunc) {
+		if !registered[routeKey(method, path)] {
+			regOps = append(regOps, spec.Operation{Method: method, Path: path})
+		}
 		registered[routeKey(method, path)] = true
 		r.MethodFunc(method, path, h)
+	}
+
+	// emittedDoc is filled once the route table is final; the /openapi.json
+	// handler closes over it.
+	var emittedDoc []byte
+	emittedDocHandler := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(emittedDoc)
 	}
 
 	// Real endpoints first; the spec-driven 501 loop skips anything already set.
 	reg(http.MethodGet, "/global/health", healthHandler(opts.Version))
 	reg(http.MethodGet, "/doc", docHandler())
-	// /openapi.json is a Forge known-addition (alias of /doc); opencode serves
-	// the spec only at /doc. Logged in conformance/known-additions.json.
-	reg(http.MethodGet, "/openapi.json", docHandler())
+	// /openapi.json is a Forge known-addition (opencode serves the spec only at
+	// /doc; logged in conformance/known-additions.json). Unlike /doc — which
+	// serves the frozen reference verbatim — /openapi.json serves the spec Forge
+	// self-emits from its registered route table (plan 06 Phase 2 / M10).
+	reg(http.MethodGet, "/openapi.json", emittedDocHandler)
 	reg(http.MethodGet, "/config", configHandler())
 	registerFindRoutes(reg)
 	registerResourceRoutes(reg, opts.Catalog)
@@ -128,7 +151,19 @@ func New(opts Options) (http.Handler, error) {
 			continue
 		}
 		registered[key] = true
+		regOps = append(regOps, spec.Operation{Method: op.Method, Path: op.Path})
 		r.MethodFunc(op.Method, op.Path, notImplemented(op.Method, op.Path))
+	}
+
+	// Self-emit the served OpenAPI spec from the final route table (plan 06 Phase
+	// 2 / M10). The 501-stub loop above registers every reference operation, so a
+	// fully-wired daemon emits a spec whose operation set matches the frozen
+	// contract; if a future change drops a reg(...) for a real handler whose path
+	// is not in the reference, or adds an unspec'd route, the emitted spec — and
+	// the drift gate — reflects it.
+	emittedDoc, err = spec.Emit(regOps)
+	if err != nil {
+		return nil, err
 	}
 
 	return r, nil

@@ -149,3 +149,9 @@ Pre-existing stale PRs unrelated to these waves: #96 (tui graphics-fineness), #7
   ⚠️ NEW DAEMON FOLLOWUPS (surfaced by #118):
    (a) No PATCH /session/{id} route in internal/server/session_handlers.go → renameSession + archive 404. Needs PATCH route + time.archived persistence (internal/session SetTitle only writes title). [server/engine task]
    (b) No push-notification/FCM relay infra (plan 13 §13.8, deferred). [remote task]
+2026-06-04 SSE-lifecycle MERGED → #119 (819d329): session.created/updated/deleted + message.removed now emit (opencode-matched shapes via session.Store WithBus→instance bus); new DELETE /session/:id/message/:messageID; conformance catalog now gates session-lifecycle CRUD (catalog_test + sse_lifecycle_test). Self-merged; review clean; no divergences. Engine track CLEAR.
+2026-06-04 SEQUENCED engine-seam wave dispatched (3 disjoint-tree tracks, after #119):
+  - plugin Phase-D hooks — agent ab758b6e5d623141d — tool.before/after, permission.ask, messages.transform, compaction hook bridges (internal/engine + pluginbridge); flag-gated, no-op when host off.
+  - OAuth token-refresh — agent aaf2901a20709cd14 — at-request refresh_token grant for provider (#109 internal/oauth) + MCP (#116 internal/mcp); persist back to shared stores; failure→needs_auth.
+  - PATCH /session/{id} + archive — agent a5c15927dcfb514f7 — missing route (rename+archive, time.archived persist) surfaced by #118; owns internal/server(session)+internal/session; regen spec for #113 drift gate. Unblocks android archive UI.
+  Still running from Wave 6: P08-U12 (tui) a5e48403, P06-SDKs (sdk) a3f3db02. (FCM relay §13.8 + remaining mobile slices sequenced next.)

@@ -99,6 +99,32 @@ func TestEmitPreservesReferenceSchemas(t *testing.T) {
 	}
 }
 
+// TestEmittedOperationsToleratesNonMethodFields asserts EmittedOperations skips
+// non-operation path-item fields (e.g. a `parameters` array or a `summary`
+// string) rather than failing to unmarshal them — guarding the gate against a
+// future reference that carries path-level parameters (which Emit would copy).
+func TestEmittedOperationsToleratesNonMethodFields(t *testing.T) {
+	doc := []byte(`{"paths":{"/x":{` +
+		`"parameters":[{"name":"q","in":"query"}],` +
+		`"summary":"a path",` +
+		`"get":{"responses":{"200":{"description":"ok"},"404":{"description":"no"}}}` +
+		`}}}`)
+	ops, err := EmittedOperations(doc)
+	if err != nil {
+		t.Fatalf("EmittedOperations: %v", err)
+	}
+	codes, ok := ops[Operation{Method: "GET", Path: "/x"}]
+	if !ok {
+		t.Fatalf("GET /x missing from %+v", ops)
+	}
+	if len(codes) != 2 || codes[0] != "200" || codes[1] != "404" {
+		t.Fatalf("codes = %v, want [200 404]", codes)
+	}
+	if len(ops) != 1 {
+		t.Errorf("expected exactly 1 op (parameters/summary skipped), got %+v", ops)
+	}
+}
+
 // TestEmitTagsAdditions asserts an operation not in the reference is emitted as a
 // tagged Forge addition (so the diff gate classifies it as additive).
 func TestEmitTagsAdditions(t *testing.T) {

@@ -95,20 +95,28 @@ func Emit(registered []Operation) ([]byte, error) {
 // The drift gate uses this to compare Forge's self-emitted spec against the
 // frozen reference.
 func EmittedOperations(doc []byte) (map[Operation][]string, error) {
+	// Path-item values are decoded as raw messages first because a path item may
+	// carry non-operation fields (e.g. a `parameters` array or a `summary` string)
+	// that are not objects — decoding those directly into an operation struct would
+	// fail. We only decode the method entries.
 	var parsed struct {
-		Paths map[string]map[string]struct {
-			Responses map[string]json.RawMessage `json:"responses"`
-		} `json:"paths"`
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
 	}
 	if err := json.Unmarshal(doc, &parsed); err != nil {
 		return nil, fmt.Errorf("parse emitted spec: %w", err)
 	}
 	out := map[Operation][]string{}
 	for path, item := range parsed.Paths {
-		for method, op := range item {
+		for method, raw := range item {
 			m := upper(method)
 			if !httpMethods[m] {
-				continue
+				continue // skip parameters, summary, servers, $ref, ...
+			}
+			var op struct {
+				Responses map[string]json.RawMessage `json:"responses"`
+			}
+			if err := json.Unmarshal(raw, &op); err != nil {
+				return nil, fmt.Errorf("parse operation %s %s: %w", m, path, err)
 			}
 			codes := make([]string, 0, len(op.Responses))
 			for code := range op.Responses {

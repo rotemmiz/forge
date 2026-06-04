@@ -109,10 +109,16 @@ class TerminalViewModel @Inject constructor(
         ptyClient?.send(text.toByteArray(Charsets.UTF_8))
     }
 
+    /** Last size reported to the daemon — guards against redundant PUT /pty calls. */
+    private var lastSize: Pair<Int, Int>? = null
+
     /** Reports the visible terminal size to the daemon so wrapping matches the view. */
     fun resize(rows: Int, cols: Int) {
         val id = ptyId ?: return
         if (rows <= 0 || cols <= 0) return
+        val size = rows to cols
+        if (size == lastSize) return // IME/scroll re-layouts fire identical sizes; skip
+        lastSize = size
         viewModelScope.launch {
             runCatching { client.resizePty(id, rows, cols) }
                 .onFailure { Log.w("TerminalVM", "resize failed", it) }

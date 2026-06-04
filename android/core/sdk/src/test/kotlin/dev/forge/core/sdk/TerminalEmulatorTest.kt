@@ -115,6 +115,26 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    fun charsetDesignationEscapeIsConsumed() {
+        // ESC ( B (designate ASCII) is a two-byte escape; its selector 'B' must
+        // NOT leak into the output. Shells commonly emit this at init.
+        assertEquals(listOf("ok"), render("(Bok"))
+        assertEquals(listOf("ok"), render(")0ok"))
+        assertEquals(listOf("ok"), render("#8ok"))
+    }
+
+    @Test
+    fun charsetDesignationSplitAcrossChunks() {
+        assertEquals(listOf("ok"), render("(", "Bok"))
+    }
+
+    @Test
+    fun selfContainedEscapeIsConsumed() {
+        // ESC c (RIS), ESC 7 (save cursor): single-char escapes, no selector byte.
+        assertEquals(listOf("xy"), render("cx7y"))
+    }
+
+    @Test
     fun belCharacterIsIgnored() {
         assertEquals(listOf("ab"), render("ab"))
     }

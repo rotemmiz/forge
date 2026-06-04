@@ -56,7 +56,7 @@ class TerminalEmulator(private val maxLines: Int = 5_000) {
         csiBuf.setLength(0)
     }
 
-    private enum class State { TEXT, ESC, CSI, OSC }
+    private enum class State { TEXT, ESC, ESC_INTERMEDIATE, CSI, OSC }
 
     private var state = State.TEXT
     private val csiBuf = StringBuilder()
@@ -69,6 +69,7 @@ class TerminalEmulator(private val maxLines: Int = 5_000) {
             when (state) {
                 State.TEXT -> handleText(c)
                 State.ESC -> handleEsc(c)
+                State.ESC_INTERMEDIATE -> state = State.TEXT // swallow the final selector byte
                 State.CSI -> handleCsi(c)
                 State.OSC -> handleOsc(c)
             }
@@ -95,8 +96,12 @@ class TerminalEmulator(private val maxLines: Int = 5_000) {
         when (c) {
             '[' -> { csiBuf.setLength(0); state = State.CSI }
             ']' -> state = State.OSC // OSC: ESC ] … (terminated by BEL or ST)
-            // Two-char escapes (charset select 'ESC(' / 'ESC)', save/restore, etc.):
-            // consume the following byte implicitly by returning to TEXT.
+            // Charset-designation / intermediate escapes (ESC ( B, ESC ) 0, ESC # 8,
+            // ESC * …, ESC % …) take ONE more selector byte — swallow it so it does
+            // not leak into the rendered text.
+            '(', ')', '*', '+', '-', '.', '/', '#', '%', ' ' -> state = State.ESC_INTERMEDIATE
+            // All other single-char escapes (ESC c, ESC 7/8, ESC M, ESC =, …) are
+            // self-contained: drop straight back to TEXT.
             else -> state = State.TEXT
         }
     }

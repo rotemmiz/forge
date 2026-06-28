@@ -502,6 +502,54 @@ Driven by SSE events `permission.asked` and `question.asked` (handled in `applyD
 - On `permission.replied` / `question.replied` / `question.rejected` SSE events, the store
   removes the entry and the sheet dismisses.
 
+### Adaptive layout & in-menu session activity (iteration 2)
+
+The chat host (`app/.../ui/AdaptiveChatScreen.kt`) infers its layout from the **window** size class
+(`currentWindowAdaptiveInfo().windowSizeClass`), using both width and height. Width COMPACT = `< 600dp`;
+height COMPACT = `< 480dp`. The whole decision is a pure, unit-tested function
+`internal fun chatLayoutFor(width: WindowWidthSizeClass, height: WindowHeightSizeClass): ChatLayout`.
+
+| Form factor (inferred)            | width / height class | Panes                | Left sessions menu  | Right info panel |
+|-----------------------------------|----------------------|----------------------|---------------------|------------------|
+| Phone portrait                    | W=COMPACT            | Chat only            | Overlay, closed     | hidden           |
+| Phone landscape                   | W≥MEDIUM, H=COMPACT  | Chat + right panel   | Inline-push, closed | persistent       |
+| Foldable (portrait)               | W≥MEDIUM, H≥MEDIUM   | Chat + right panel   | Inline-push, closed | persistent       |
+| Foldable landscape                | W=EXPANDED, H≥MEDIUM | Chat + right panel   | Inline-push, closed | persistent       |
+| Tablet (portrait & landscape)     | W≥MEDIUM             | Chat + right panel   | Inline-push, closed | persistent       |
+
+One rule, keyed on width — `compactWidth = width == COMPACT`:
+- `singlePane = compactWidth` — chat fills the window on compact width.
+- `showRightPanel = !compactWidth` — the `SessionInfoPanel` is **persistent** on every window wider
+  than compact (this is the change that brings it to foldable-portrait and phone-landscape).
+- `leftRailMode = if (compactWidth) Overlay else InlinePush` — the sessions menu is a scrim
+  `ModalNavigationDrawer` on compact width and an inline-push 220dp rail on wider windows. It is
+  **closed by default in every case**; the leading top-bar icon (a hamburger on all form factors)
+  toggles it, and the OS back gesture returns to the session-list home.
+
+Behavior changes vs. iteration 1: the left rail was previously *open by default* on non-compact and
+the right panel appeared *only* on EXPANDED; both are superseded by the rule above.
+
+**Coverage / "did I miss a layout?"**
+- **Folded cover display** is narrow → W=COMPACT → behaves as a phone. No special case.
+- **Split-screen / freeform / DeX / ChromeOS / desktop** windows re-evaluate the same rule because we
+  key off the window, not the device — a narrow split pane collapses to chat-only automatically.
+- **Half-folded "tabletop" hinge posture** (`FoldingFeature`) is *deferred* — no hinge-aware splitting
+  yet. The `height` class is carried through `chatLayoutFor` so a future tweak (e.g. relaxing the
+  right panel on a cramped W=MEDIUM/H=COMPACT phone-landscape) needs no signature change.
+
+**In-menu session activity** (Claude-Code-mobile-style). The sessions menu reads the global store
+maps `AppState.sessionStatus` / `AppState.permissions` / `AppState.questions` (all keyed by
+sessionID) via a pure projection `projectSessionList(appState, showArchived)` in
+`feature/sessions/.../SessionListViewModel.kt`. Both the rail and the full-screen `SessionListScreen`
+render shared affordances (`feature/sessions/.../ui/SessionActivity.kt`):
+- a 12dp **spinner** beside any session whose status is non-idle (`session.status` `type: "busy"`);
+- a pending **permission** → inline **Approve / Deny** buttons in the row (`POST /permission/{id}/reply`);
+- a pending **question** (free-text) → inline **text field + Reply / Skip** in the row
+  (`POST /question/{id}/reply`); only the first pending request per session is surfaced, the rest
+  queue behind it;
+- the menu's hamburger shows an **attention badge** when a session *other than the current one* has a
+  pending permission/question, so a background ask is noticeable while the menu is collapsed.
+
 ### PTY terminal pane
 
 - WS-PTY over `wss://{host}/pty/{id}/connect` (or `ws://`).
@@ -598,7 +646,7 @@ Phase A complete = a usable mobile coding assistant against real opencode.
 | API level | 26 (min), 30, 33, 34, 35 |
 | Architecture | arm64-v8a, x86_64 (emulator) |
 | Network | WiFi, 4G, flaky (throttled via Android emulator network shaping), VPN |
-| Screen | compact phone (360 dp), large phone (420 dp), foldable (700 dp unfolded) |
+| Screen | phone portrait (360 dp), phone landscape (800×360 dp), large phone (420 dp), foldable (700 dp unfolded, both orientations), tablet (840 dp+, both orientations) |
 
 Run on Firebase Test Lab with real devices for physical sensor / thermal tests.
 

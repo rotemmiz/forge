@@ -471,16 +471,15 @@ internal fun SessionInfoPanel(
         }
 
         if (tokens != null) {
-            val total = (tokens.input + tokens.output + tokens.reasoning +
-                tokens.cache.read + tokens.cache.write).toLong()
-            val fraction = (total.toFloat() / 200_000L).coerceIn(0f, 1f)
+            val used = tokens.contextFootprint
+            val fraction = (used.toFloat() / 200_000L).coerceIn(0f, 1f)
             InfoSectionHeader("CONTEXT")
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
             ) {
                 Text(
-                    text = formatTokens(total),
+                    text = formatTokens(used),
                     fontFamily = ForgeMono,
                     fontSize = 12.5.sp,
                     color = OnSurfaceVariant,

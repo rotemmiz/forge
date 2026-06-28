@@ -80,10 +80,13 @@ class ChatViewModel @Inject constructor(
                     ?: messages.lastOrNull { it.agent != null }?.agent,
                 modelID = lastModelled?.modelID,
                 providerID = lastModelled?.providerID,
-                // Context = the latest completed assistant turn's own token usage,
-                // so the gauge reflects what's actually in the window — not the
-                // session's cumulative lifetime total.
-                contextTokens = messages.lastOrNull { it.role == "assistant" && it.tokens != null }?.tokens,
+                // Context = the latest assistant turn whose tokens are populated.
+                // The daemon emits a zero-valued `tokens` block at turn START (before
+                // counts are known), so we require a non-zero footprint — otherwise the
+                // gauge would snap to 0% for the whole duration of each in-flight turn.
+                contextTokens = messages.lastOrNull {
+                    it.role == "assistant" && (it.tokens?.contextFootprint ?: 0L) > 0L
+                }?.tokens,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())

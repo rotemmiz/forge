@@ -1,7 +1,9 @@
 package dev.forge.core.network
 
 import dev.forge.core.model.AppEvent
+import dev.forge.core.model.CacheUsage
 import dev.forge.core.model.SseEvent
+import dev.forge.core.model.TokenUsage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
@@ -32,9 +34,21 @@ class SseMessageTokensTest {
         assertNotNull(tokens)
         assertEquals(54351.0, tokens.input, 0.0)
         assertEquals(247.0, tokens.output, 0.0)
-        // The unknown `total` field is dropped, and the summed footprint equals it.
-        val footprint = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
-        assertEquals(54598.0, footprint, 0.0)
+        // The wire's `total` is parsed and is what the gauge uses.
+        assertEquals(54598.0, tokens.total)
+        assertEquals(54598L, tokens.contextFootprint)
+    }
+
+    @Test
+    fun contextFootprint_prefersTotal_elseSumsExcludingReasoning() {
+        // No `total` → sum input+output+cache, reasoning excluded.
+        val noTotal = TokenUsage(input = 1000.0, output = 50.0, reasoning = 9999.0, cache = CacheUsage(read = 200.0, write = 0.0))
+        assertEquals(1250L, noTotal.contextFootprint)
+        // `total` present → preferred verbatim.
+        assertEquals(7777L, noTotal.copy(total = 7777.0).contextFootprint)
+        // A turn that has only just started reports zeros → zero footprint, so the
+        // gauge-selection rule skips it and keeps the previous turn's value.
+        assertEquals(0L, TokenUsage().contextFootprint)
     }
 
     @Test

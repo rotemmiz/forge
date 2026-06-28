@@ -3,6 +3,7 @@ package dev.forge.feature.chat.ui
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -89,5 +90,37 @@ fun ShareSessionDialog(
                 TextButton(onClick = onUnshare) { Text("Unshare") }
             }
         },
+    )
+}
+
+/**
+ * Generic confirm/cancel dialog for actions that need a guard (delete, archive).
+ * The confirm label is tinted [Error] when [destructive].
+ */
+@Composable
+fun ConfirmActionDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    destructive: Boolean = false,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceContainerHigh,
+        title = { Text(title, color = OnSurface) },
+        text = { Text(message, color = OnSurfaceVariant) },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = if (destructive) {
+                    ButtonDefaults.textButtonColors(contentColor = Error)
+                } else {
+                    ButtonDefaults.textButtonColors()
+                },
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

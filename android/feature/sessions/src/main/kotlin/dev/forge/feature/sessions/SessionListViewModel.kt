@@ -12,6 +12,8 @@ import dev.forge.core.sdk.ForgeClient
 import dev.forge.core.store.AppState
 import dev.forge.core.store.AppStore
 import dev.forge.feature.sessions.ui.isSessionBusy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -22,6 +24,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -130,6 +134,14 @@ internal fun projectSessionList(
     )
 }
 
+/** The slice of [AppState] the session list reads — used to gate re-projection. */
+private data class SessionInputs(
+    val sessions: List<Session>,
+    val sessionStatus: Map<String, String>,
+    val permissions: Map<String, List<PermissionRequest>>,
+    val questions: Map<String, List<QuestionRequest>>,
+)
+
 @HiltViewModel
 class SessionListViewModel @Inject constructor(
     private val client: ForgeClient,
@@ -144,9 +156,30 @@ class SessionListViewModel @Inject constructor(
     private val _filter = MutableStateFlow(SessionFilter.All)
 
     val uiState: StateFlow<SessionListUiState> =
-        combine(store.state, _showArchived, _query, _filter) { appState, showArchived, query, filter ->
-            projectSessionList(appState, showArchived, query, filter)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
+        combine(
+            // Only re-project when a field the list actually reads changes — not on every
+            // message/part streaming delta, which would otherwise re-sort + re-group + do
+            // per-session LocalDate math over the whole global list on the main thread.
+            store.state
+                .map { SessionInputs(it.sessions, it.sessionStatus, it.permissions, it.questions) }
+                .distinctUntilChanged(),
+            _showArchived,
+            _query,
+            _filter,
+        ) { inputs, showArchived, query, filter ->
+            projectSessionList(
+                AppState(
+                    sessions = inputs.sessions,
+                    sessionStatus = inputs.sessionStatus,
+                    permissions = inputs.permissions,
+                    questions = inputs.questions,
+                ),
+                showArchived,
+                query,
+                filter,
+            )
+        }.flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
@@ -200,6 +233,8 @@ class SessionListViewModel @Inject constructor(
                 sessions.distinctBy { it.id }.forEach { session ->
                     store.dispatch(AppEvent.SessionUpdated(session))
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Sessions will load from SSE events once connected
             }

@@ -65,6 +65,31 @@ class PaletteEntryTest {
     }
 
     @Test
+    fun keysAreUniqueEvenWhenBuiltinAndDaemonShareAName() {
+        // A user-defined `/diff` collides with the built-in `diff` by name; keys must still differ
+        // so LazyColumn doesn't throw on duplicate keys.
+        val entries = buildPaletteEntries(
+            builtinCommands,
+            listOf(daemon("diff"), daemon("deploy")),
+            RecordingCommandActions(),
+        )
+        val keys = entries.map { it.key }
+        assertEquals(keys.size, keys.toSet().size)
+        // Both the built-in and the daemon `diff` are present (TUI-style: show both).
+        assertEquals(2, entries.count { it.name == "diff" })
+    }
+
+    @Test
+    fun duplicateDaemonNamesAreDeduped() {
+        val entries = buildPaletteEntries(
+            emptyList(),
+            listOf(daemon("deploy", source = "command"), daemon("deploy", source = "mcp")),
+            RecordingCommandActions(),
+        )
+        assertEquals(1, entries.size)
+    }
+
+    @Test
     fun filterByQueryIsCaseInsensitive() {
         val entries = buildPaletteEntries(builtinCommands, emptyList(), RecordingCommandActions())
         val result = entries.filterByQuery("MO")

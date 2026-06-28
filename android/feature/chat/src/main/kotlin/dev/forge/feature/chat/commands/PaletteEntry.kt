@@ -18,6 +18,12 @@ sealed interface PaletteEntry {
     /** Optional trailing badge: "soon" for unbuilt built-ins, "mcp"/"skill" for daemon sources. */
     val badge: String?
 
+    /**
+     * Stable, collision-free list key. A built-in and a daemon command may share a [name]
+     * (e.g. a user-defined `/diff`); namespacing the key keeps `LazyColumn` keys unique.
+     */
+    val key: String
+
     data class Builtin(
         val command: BuiltinCommand,
         override val enabled: Boolean,
@@ -25,6 +31,7 @@ sealed interface PaletteEntry {
         override val name: String get() = command.name
         override val description: String? get() = command.description
         override val badge: String? get() = if (enabled) null else "soon"
+        override val key: String get() = "builtin:$name"
     }
 
     data class Daemon(val info: CommandInfo) : PaletteEntry {
@@ -32,14 +39,16 @@ sealed interface PaletteEntry {
         override val description: String? get() = info.description
         override val enabled: Boolean get() = true
         override val badge: String? get() = info.source?.takeIf { it == "mcp" || it == "skill" }
+        override val key: String get() = "daemon:$name"
     }
 }
 
 /**
- * Merges built-in actions ahead of daemon commands (mirrors the TUI's
- * `filterSlash`, builtins first). Unbuilt built-ins are kept but disabled;
+ * Merges built-in actions ahead of daemon commands (builtins-first ordering, like
+ * the TUI's `filterSlash`). Unbuilt built-ins are kept but disabled;
  * implemented-but-currently-unavailable built-ins (e.g. `/terminal` without a
- * directory) are hidden.
+ * directory) are hidden. Daemon commands are de-duplicated by name so the merged
+ * list always has collision-free [PaletteEntry.key]s.
  */
 fun buildPaletteEntries(
     builtins: List<BuiltinCommand>,
@@ -55,6 +64,7 @@ fun buildPaletteEntries(
     }
     val daemonEntries = daemon
         .filter { it.name.isNotEmpty() }
+        .distinctBy { it.name }
         .map { PaletteEntry.Daemon(it) }
     return builtinEntries + daemonEntries
 }

@@ -138,7 +138,11 @@ fun ChatScreen(
         override fun archiveSession() { showArchiveConfirm = true }
         override fun deleteSession() { showDeleteConfirm = true }
     }
-    val paletteEntries = buildPaletteEntries(builtinCommands, commands, commandActions)
+    // Rebuilt only when the inputs the list depends on change (daemon commands +
+    // directory availability), not on every streaming recomposition.
+    val paletteEntries = remember(commands, sessionDirectory) {
+        buildPaletteEntries(builtinCommands, commands, commandActions)
+    }
 
     // The strip shows the user's explicit pick if any, else the last-run state from the stream.
     val displayAgent = selectedAgent ?: uiState.agentMode

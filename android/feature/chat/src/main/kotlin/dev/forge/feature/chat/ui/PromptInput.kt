@@ -287,7 +287,7 @@ fun PromptInput(
 private fun CommandPanel(entries: List<PaletteEntry>, onPick: (PaletteEntry) -> Unit) {
     SuggestionPanel {
         LazyColumn {
-            itemsIndexed(entries, key = { _, e -> e.name }) { index, entry ->
+            itemsIndexed(entries, key = { _, e -> e.key }) { index, entry ->
                 if (index > 0) HorizontalDivider(color = Hairline)
                 val rowModifier = Modifier
                     .fillMaxWidth()

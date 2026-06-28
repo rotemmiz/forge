@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -143,7 +144,8 @@ private fun PatchPartView(
     editParts: List<ToolPart> = emptyList(),
 ) {
     // When the diff API has no data, synthesize diffs from the edit ToolPart inputs.
-    val effectiveDiffs = remember(fileDiffs, editParts) {
+    // Include `part` as a key so that streaming additions to `part.files` re-run the block.
+    val effectiveDiffs = remember(part, fileDiffs, editParts) {
         if (fileDiffs.isNotEmpty()) fileDiffs
         else part.files.mapNotNull { filePath ->
             val ep = editParts.firstOrNull { tp ->
@@ -288,8 +290,9 @@ private fun isDiffNoise(line: String): Boolean =
 @Composable
 fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier) {
     // Strip git-diff cruft so the body reads like the design's unified diff.
-    val perFile = diffs.map { it.patch?.lines().orEmpty().filterNot(::isDiffNoise) }
-    val totalLines = perFile.sumOf { it.size }
+    // Keyed on `diffs` so it doesn't re-run on every recomposition.
+    val perFile = remember(diffs) { diffs.map { it.patch?.lines().orEmpty().filterNot(::isDiffNoise) } }
+    val totalLines = remember(perFile) { perFile.sumOf { it.size } }
     var budget = MAX_DIFF_LINES
     // Track viewport width via onSizeChanged (a layout side-effect) instead of
     // BoxWithConstraints (SubcomposeLayout). SubcomposeLayout inside LazyColumn
@@ -304,11 +307,12 @@ fun UnifiedDiffView(diffs: List<SnapshotFileDiff>, modifier: Modifier = Modifier
             .onSizeChanged { viewportWidthPx = it.width },
     ) {
         val viewportWidthDp = with(density) { viewportWidthPx.toDp() }
-        perFile.forEach { lines ->
+        diffs.zip(perFile).forEach { (diff, lines) ->
             if (budget <= 0 || lines.isEmpty()) return@forEach
             val shown = lines.take(budget)
             budget -= shown.size
-            val scrollState = rememberScrollState()
+            // Keyed by file path so scroll position is stable when files reorder mid-stream.
+            val scrollState = remember(diff.file) { ScrollState(0) }
             Box(modifier = Modifier.horizontalScroll(scrollState)) {
                 Column(
                     modifier = Modifier

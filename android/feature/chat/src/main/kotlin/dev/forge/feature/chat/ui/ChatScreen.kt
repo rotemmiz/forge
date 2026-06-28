@@ -303,13 +303,15 @@ fun ChatScreen(
                     // PatchParts from SSE may lack the `files` list that the REST
                     // endpoint includes — fall back to the REST-loaded part in that case.
                     val liveParts = uiState.parts[message.id]
-                    val effectiveParts: List<Part> = if (liveParts == null) {
-                        message.parts
-                    } else {
-                        liveParts.map { lp ->
-                            if (lp is PatchPart && lp.files.isEmpty()) {
-                                message.parts.firstOrNull { it.id == lp.id } ?: lp
-                            } else lp
+                    val effectiveParts: List<Part> = remember(liveParts, message.parts) {
+                        if (liveParts == null) {
+                            message.parts
+                        } else {
+                            val byId = message.parts.associateBy { it.id }
+                            liveParts.map { lp ->
+                                if (lp is PatchPart && lp.files.isEmpty()) byId[lp.id] ?: lp
+                                else lp
+                            }
                         }
                     }
                     MessageBlock(

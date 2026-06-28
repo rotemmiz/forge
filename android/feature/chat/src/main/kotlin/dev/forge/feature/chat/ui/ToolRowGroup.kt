@@ -112,6 +112,9 @@ private fun ToolRowView(row: ToolRow) {
     }
 }
 
+private val EDIT_TOOL_NAMES = setOf("edit", "patch")
+private val GLOB_TOOL_NAMES = setOf("grep", "glob", "list", "ls")
+
 /** Tools that are surfaced elsewhere (todos sheet) and skipped from tool rows. */
 internal fun ToolPart.isHiddenFromRows(): Boolean =
     tool == "todowrite" || tool == "todoread"
@@ -139,7 +142,7 @@ fun groupRenderItems(parts: List<Part>): List<RenderItem> {
     // would only keep one, leaving the rest unclaimed and leaking into ToolRowGroup.
     val editsByFile: Map<String, List<ToolPart>> = parts
         .filterIsInstance<ToolPart>()
-        .filter { it.tool.lowercase() in setOf("edit", "patch") }
+        .filter { it.tool.lowercase() in EDIT_TOOL_NAMES }
         .mapNotNull { tp -> tp.inputString("file_path", "filePath", "path")?.let { it to tp } }
         .groupBy({ it.first }, { it.second })
     val claimedIds: Set<String> = parts
@@ -153,7 +156,7 @@ fun groupRenderItems(parts: List<Part>): List<RenderItem> {
         // Exclude edit ToolParts already claimed by a PatchPart — they render there.
         val visible = pending.filter { it.id !in claimedIds }
         if (visible.isNotEmpty()) items += RenderItem.Tools(visible)
-        pending = mutableListOf()
+        pending.clear()
     }
     for (part in parts) {
         when {
@@ -176,7 +179,7 @@ fun groupRenderItems(parts: List<Part>): List<RenderItem> {
 
 private fun toolRowOf(part: ToolPart): ToolRow {
     val tool = part.tool.lowercase()
-    val glyph = if (tool in setOf("grep", "glob", "list", "ls")) "*" else "→"
+    val glyph = if (tool in GLOB_TOOL_NAMES) "*" else "→"
     val label = when (tool) {
         "read" -> "Read"
         "write" -> "Write"

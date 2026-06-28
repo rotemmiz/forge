@@ -17,6 +17,9 @@ kotlin {
             api(project(":core:model"))
             api(libs.kotlinx.coroutines.core)
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
         androidMain.dependencies {
             implementation(libs.hilt.android)
         }

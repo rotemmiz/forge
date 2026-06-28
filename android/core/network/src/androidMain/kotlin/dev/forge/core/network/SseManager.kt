@@ -242,8 +242,13 @@ class SseManager @Inject constructor(
             // Coalesce: keep latest per (type, compound key)
             val coalesced = coalesce(batch)
             for (raw in coalesced) {
-                val event = eventParser.parse(raw)
-                store.dispatch(event)
+                // Guard the sole batchChannel consumer: a throwing reducer must not kill the
+                // flush loop (it would silently stop all live updates — the very bug this fixes).
+                try {
+                    store.dispatch(eventParser.parse(raw))
+                } catch (e: Exception) {
+                    Log.w(TAG, "dropped SSE event; dispatch failed", e)
+                }
             }
         }
     }

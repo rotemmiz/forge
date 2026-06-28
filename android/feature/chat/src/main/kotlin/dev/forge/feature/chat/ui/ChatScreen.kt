@@ -91,7 +91,11 @@ fun ChatScreen(
             }
         }
     }
-    LaunchedEffect(listState) {
+    // Key on stickToBottom (not listState): it is re-created — and reset to true — when the
+    // session id changes (including the initial null → id transition), so the collector must
+    // relaunch to read the live state object. Keying on the stable listState would freeze this
+    // coroutine onto the first state instance, so scroll-up could never stop the snap.
+    LaunchedEffect(stickToBottom) {
         snapshotFlow { uiState.messages.size + uiState.optimisticMessages.size }
             .collect { if (stickToBottom.value) listState.scrollToItem(0) }
     }

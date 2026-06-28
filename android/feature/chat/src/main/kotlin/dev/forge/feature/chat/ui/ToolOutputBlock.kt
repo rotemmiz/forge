@@ -124,10 +124,17 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
             HorizontalDivider(color = Hairline)
             // Cap the opened log to a short preview; reset to capped each time the block
             // is opened (remember keyed on `expanded`) so a long log never floods the stream.
-            val lines = remember(body) { body.lines() }
+            // Trim so the cap counts the same lines as the header badge (`lineCount`),
+            // otherwise a trailing newline makes the badge say "7 lines" while the button
+            // says "Show all 8 lines" and reveals only a blank trailing line.
+            val lines = remember(body) { body.trim().lines() }
             var showAll by remember(expanded) { mutableStateOf(false) }
             val capped = lines.size > TOOL_LOG_PREVIEW_LINES
-            val shown = if (capped && !showAll) lines.take(TOOL_LOG_PREVIEW_LINES).joinToString("\n") else body
+            val shown = if (capped && !showAll) {
+                lines.take(TOOL_LOG_PREVIEW_LINES).joinToString("\n")
+            } else {
+                lines.joinToString("\n")
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

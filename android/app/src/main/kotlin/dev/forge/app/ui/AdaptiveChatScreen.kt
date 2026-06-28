@@ -118,11 +118,12 @@ fun AdaptiveChatScreen(
 
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    // Inline-push rail visibility. Closed by default; re-keyed on layout so a fold/rotate
-    // resets it to closed rather than reopening with stale state.
+    // Inline-push rail visibility. Closed by default; re-keyed on layout so a change in
+    // layout (e.g. fold/unfold across the compact boundary) resets it to closed rather
+    // than reopening with stale state. The effect closes the overlay drawer on the same
+    // change so it never lingers when the layout switches out of overlay mode.
     var railOpen by remember(layout) { mutableStateOf(false) }
     LaunchedEffect(layout) {
-        railOpen = false
         if (drawerState.isOpen) drawerState.close()
     }
 
@@ -180,7 +181,7 @@ fun AdaptiveChatScreen(
     }
 
     // Center pane: chat, plus the persistent right info panel when the layout calls for it.
-    val chatWithRightPanel: @Composable (Modifier) -> Unit = { mod ->
+    val centerPane: @Composable (Modifier) -> Unit = { mod ->
         Row(mod) {
             // Box wrapper gives ChatScreen's Scaffold a bounded weight slot in the Row.
             Box(Modifier.weight(1f)) {
@@ -237,7 +238,7 @@ fun AdaptiveChatScreen(
                     }
                 },
             ) {
-                chatWithRightPanel(Modifier.fillMaxSize())
+                centerPane(Modifier.fillMaxSize())
             }
             // Wider windows: the menu pushes the chat aside (inline), closed by default.
             LeftRailMode.InlinePush -> Row(Modifier.fillMaxSize()) {
@@ -251,7 +252,7 @@ fun AdaptiveChatScreen(
                         Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                     }
                 }
-                chatWithRightPanel(Modifier.weight(1f))
+                centerPane(Modifier.weight(1f))
             }
         }
     }
@@ -389,11 +390,15 @@ private fun SessionRailRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
             .background(if (isActive) SurfaceContainerHigh else Surface)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Only the title row opens the session; the inline actions below are siblings
+        // outside the clickable so tapping their text/gaps doesn't also navigate.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        ) {
             Text(
                 text = session.title?.takeIf { it.isNotBlank() } ?: "New session",
                 fontSize = 13.sp,

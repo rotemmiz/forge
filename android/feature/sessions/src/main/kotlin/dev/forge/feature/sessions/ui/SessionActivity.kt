@@ -20,7 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,7 +38,8 @@ fun isSessionBusy(status: String?): Boolean = status != null && status != "idle"
 /**
  * 12dp spinner shown beside a session's title while a turn is in flight — the
  * per-session activity indicator surfaced in the sessions menu. Renders nothing
- * when the session is idle. Matches the active-session top-bar spinner.
+ * when the session is idle; shown for any non-idle status (the daemon emits
+ * `type: "busy"` today).
  */
 @Composable
 fun SessionStatusSpinner(status: String?, modifier: Modifier = Modifier) {
@@ -109,7 +110,9 @@ fun SessionPendingActions(
             }
         }
         question != null -> {
-            var answer by remember(question.id) { mutableStateOf("") }
+            // rememberSaveable so a half-typed answer survives the row scrolling out of
+            // the LazyColumn (or a config change) — the menu is the point of answering here.
+            var answer by rememberSaveable(question.id) { mutableStateOf("") }
             Column(modifier.fillMaxWidth()) {
                 Text(
                     text = question.message ?: "The agent has a question",

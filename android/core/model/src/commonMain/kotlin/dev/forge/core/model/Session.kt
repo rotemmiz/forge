@@ -37,7 +37,7 @@ data class TokenUsage(
      * into output). Drives the live context gauge.
      */
     val contextFootprint: Long
-        get() = (total ?: (input + output + cache.read + cache.write)).toLong()
+        get() = (total?.takeIf { it > 0.0 } ?: (input + output + cache.read + cache.write)).toLong()
 }
 
 @Serializable

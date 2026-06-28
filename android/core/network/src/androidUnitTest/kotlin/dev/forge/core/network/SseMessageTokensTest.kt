@@ -44,8 +44,11 @@ class SseMessageTokensTest {
         // No `total` → sum input+output+cache, reasoning excluded.
         val noTotal = TokenUsage(input = 1000.0, output = 50.0, reasoning = 9999.0, cache = CacheUsage(read = 200.0, write = 0.0))
         assertEquals(1250L, noTotal.contextFootprint)
-        // `total` present → preferred verbatim.
+        // `total` present and positive → preferred verbatim.
         assertEquals(7777L, noTotal.copy(total = 7777.0).contextFootprint)
+        // `total` present but zero (provider hasn't reported it) → fall through to the
+        // sum, matching the daemon's `*t.Total > 0` guard (overflow.go).
+        assertEquals(1250L, noTotal.copy(total = 0.0).contextFootprint)
         // A turn that has only just started reports zeros → zero footprint, so the
         // gauge-selection rule skips it and keeps the previous turn's value.
         assertEquals(0L, TokenUsage().contextFootprint)

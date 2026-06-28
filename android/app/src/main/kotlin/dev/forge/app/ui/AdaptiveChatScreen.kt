@@ -449,13 +449,13 @@ internal fun SessionInfoPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 10.dp),
         ) {
             if (agentMode != null) {
                 Text(
                     text = agentMode.replaceFirstChar { it.uppercase() },
                     fontFamily = ForgeMono,
-                    fontSize = 12.sp,
+                    fontSize = 13.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = OnPrimary,
                     modifier = Modifier
@@ -468,7 +468,7 @@ internal fun SessionInfoPanel(
             Text(
                 text = modelID ?: "",
                 fontFamily = ForgeMono,
-                fontSize = 12.sp,
+                fontSize = 13.5.sp,
                 color = OnSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -498,19 +498,19 @@ internal fun SessionInfoPanel(
             InfoSectionHeader("CONTEXT")
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
             ) {
                 Text(
                     text = formatTokens(total),
                     fontFamily = ForgeMono,
-                    fontSize = 11.sp,
+                    fontSize = 12.5.sp,
                     color = OnSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
                     text = "/ 200K · ${(fraction * 100).toInt()}%",
                     fontFamily = ForgeMono,
-                    fontSize = 11.sp,
+                    fontSize = 12.5.sp,
                     color = OnSurfaceFaint,
                 )
             }
@@ -518,8 +518,8 @@ internal fun SessionInfoPanel(
                 progress = { fraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    .height(3.dp),
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .height(4.dp),
                 color = Primary,
                 trackColor = OutlineVariant,
             )
@@ -529,11 +529,11 @@ internal fun SessionInfoPanel(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 3.dp),
+                    .padding(start = 10.dp, end = 10.dp, top = 9.dp, bottom = 3.dp),
             ) {
                 Text(
                     text = "CHANGES",
-                    fontSize = 10.sp,
+                    fontSize = 11.5.sp,
                     letterSpacing = 0.1.em,
                     fontWeight = FontWeight.SemiBold,
                     color = Secondary,
@@ -542,7 +542,7 @@ internal fun SessionInfoPanel(
                 )
                 Text(
                     text = "${diffs.size} files",
-                    fontSize = 10.sp,
+                    fontSize = 11.5.sp,
                     color = OnSurfaceFaint,
                     fontFamily = ForgeMono,
                 )
@@ -550,12 +550,12 @@ internal fun SessionInfoPanel(
             diffs.forEach { diff ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
                 ) {
                     Text(
                         text = diff.file?.substringAfterLast('/') ?: "unknown",
                         fontFamily = ForgeMono,
-                        fontSize = 11.sp,
+                        fontSize = 12.5.sp,
                         color = OnSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -566,7 +566,7 @@ internal fun SessionInfoPanel(
                         Text(
                             text = "+${diff.additions}",
                             fontFamily = ForgeMono,
-                            fontSize = 11.sp,
+                            fontSize = 12.5.sp,
                             color = Tertiary,
                         )
                         Spacer(Modifier.width(3.dp))
@@ -575,13 +575,13 @@ internal fun SessionInfoPanel(
                         Text(
                             text = "-${diff.deletions}",
                             fontFamily = ForgeMono,
-                            fontSize = 11.sp,
+                            fontSize = 12.5.sp,
                             color = Error,
                         )
                     }
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(3.dp))
         }
 
         if (todos.isNotEmpty()) {
@@ -589,7 +589,7 @@ internal fun SessionInfoPanel(
             todos.forEach { todo ->
                 Row(
                     verticalAlignment = Alignment.Top,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
                 ) {
                     val (dot, dotColor) = when (todo.status) {
                         "completed" -> "✓" to Tertiary
@@ -599,23 +599,23 @@ internal fun SessionInfoPanel(
                     Text(
                         text = dot,
                         fontFamily = ForgeMono,
-                        fontSize = 11.sp,
+                        fontSize = 12.5.sp,
                         color = dotColor,
-                        modifier = Modifier.width(14.dp),
+                        modifier = Modifier.width(16.dp),
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
                         text = todo.content,
-                        fontSize = 12.sp,
+                        fontSize = 13.5.sp,
                         color = if (todo.status == "completed") OnSurfaceFaint else OnSurfaceVariant,
-                        lineHeight = 16.sp,
+                        lineHeight = 18.sp,
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(3.dp))
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -623,8 +623,8 @@ internal fun SessionInfoPanel(
 private fun InfoSectionHeader(label: String) {
     Text(
         text = label,
-        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 3.dp),
-        fontSize = 10.sp,
+        modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 9.dp, bottom = 3.dp),
+        fontSize = 11.5.sp,
         letterSpacing = 0.1.em,
         fontWeight = FontWeight.SemiBold,
         color = Secondary,
@@ -634,18 +634,18 @@ private fun InfoSectionHeader(label: String) {
 
 @Composable
 private fun InfoRow(key: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp)) {
         Text(
             text = key,
             fontFamily = ForgeMono,
-            fontSize = 11.sp,
+            fontSize = 12.5.sp,
             color = OnSurfaceFaint,
-            modifier = Modifier.width(56.dp),
+            modifier = Modifier.width(64.dp),
         )
         Text(
             text = value,
             fontFamily = ForgeMono,
-            fontSize = 11.sp,
+            fontSize = 12.5.sp,
             color = OnSurfaceVariant,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,

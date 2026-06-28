@@ -38,6 +38,9 @@ data class ChatUiState(
     val agentMode: String? = null,
     val modelID: String? = null,
     val providerID: String? = null,
+    /** Live context-window occupancy: the most recent assistant turn's token usage
+     *  (NOT the session's cumulative total, which grows unbounded across turns). */
+    val contextTokens: TokenUsage? = null,
     val isLoading: Boolean = false,
     val isSending: Boolean = false,
 )
@@ -77,6 +80,13 @@ class ChatViewModel @Inject constructor(
                     ?: messages.lastOrNull { it.agent != null }?.agent,
                 modelID = lastModelled?.modelID,
                 providerID = lastModelled?.providerID,
+                // Context = the latest assistant turn whose tokens are populated.
+                // The daemon emits a zero-valued `tokens` block at turn START (before
+                // counts are known), so we require a non-zero footprint — otherwise the
+                // gauge would snap to 0% for the whole duration of each in-flight turn.
+                contextTokens = messages.lastOrNull {
+                    it.role == "assistant" && (it.tokens?.contextFootprint ?: 0L) > 0L
+                }?.tokens,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())

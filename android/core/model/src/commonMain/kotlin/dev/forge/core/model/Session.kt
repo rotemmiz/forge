@@ -27,7 +27,18 @@ data class TokenUsage(
     val output: Double = 0.0,
     val reasoning: Double = 0.0,
     val cache: CacheUsage = CacheUsage(),
-)
+    /** Provider-reported total when present; the daemon's overflow check prefers it. */
+    val total: Double? = null,
+) {
+    /**
+     * Context-window occupancy for THIS turn — mirrors the daemon's compaction
+     * accounting (overflow.go totalTokens): prefer the reported [total], else
+     * input + output + cache (reasoning excluded, since some providers fold it
+     * into output). Drives the live context gauge.
+     */
+    val contextFootprint: Long
+        get() = (total?.takeIf { it > 0.0 } ?: (input + output + cache.read + cache.write)).toLong()
+}
 
 @Serializable
 data class CacheUsage(

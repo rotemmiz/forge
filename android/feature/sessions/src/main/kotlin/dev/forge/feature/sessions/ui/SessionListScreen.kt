@@ -19,7 +19,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.forge.core.model.PermissionRequest
+import dev.forge.core.model.QuestionRequest
 import dev.forge.core.model.Session
+import dev.forge.feature.sessions.SessionListUiState
 import dev.forge.feature.sessions.SessionListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,13 +93,15 @@ fun SessionListScreen(
                 onNewSession = { viewModel.createSession { onSessionClick(it) } },
             )
             else -> SessionList(
-                sessions = uiState.sessions,
-                showArchived = uiState.showArchived,
+                uiState = uiState,
                 onSessionClick = onSessionClick,
                 onRenameSession = { session -> renameTarget = session },
                 onArchiveSession = { sessionId -> viewModel.archiveSession(sessionId) },
                 onForkSession = { sessionId -> viewModel.forkSession(sessionId) { newSession -> onSessionClick(newSession) } },
                 onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) },
+                onReplyPermission = { id, allow -> viewModel.replyPermission(id, allow) },
+                onReplyQuestion = { id, answer -> viewModel.replyQuestion(id, answer) },
+                onSkipQuestion = { id -> viewModel.rejectQuestion(id) },
                 modifier = Modifier.padding(padding),
             )
         }
@@ -116,25 +121,36 @@ fun SessionListScreen(
 
 @Composable
 private fun SessionList(
-    sessions: List<Session>,
-    showArchived: Boolean,
+    uiState: SessionListUiState,
     onSessionClick: (Session) -> Unit,
     onRenameSession: (Session) -> Unit,
     onArchiveSession: (String) -> Unit,
     onForkSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
+    onReplyPermission: (String, Boolean) -> Unit,
+    onReplyQuestion: (String, String) -> Unit,
+    onSkipQuestion: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(modifier = modifier.fillMaxSize()) {
-        items(sessions, key = { it.id }) { session ->
+        items(uiState.sessions, key = { it.id }) { session ->
+            val permission = uiState.pendingPermissions[session.id]
+            val question = uiState.pendingQuestions[session.id]
             SessionRow(
                 session = session,
-                showArchived = showArchived,
+                showArchived = uiState.showArchived,
+                status = uiState.statuses[session.id],
+                pendingPermission = permission,
+                pendingQuestion = question,
                 onClick = { onSessionClick(session) },
                 onRename = { onRenameSession(session) },
                 onArchive = { onArchiveSession(session.id) },
                 onFork = { onForkSession(session.id) },
                 onDelete = { onDeleteSession(session.id) },
+                onApprove = { permission?.let { onReplyPermission(it.id, true) } },
+                onDeny = { permission?.let { onReplyPermission(it.id, false) } },
+                onReply = { answer -> question?.let { onReplyQuestion(it.id, answer) } },
+                onSkip = { question?.let { onSkipQuestion(it.id) } },
             )
             HorizontalDivider()
         }
@@ -146,40 +162,63 @@ private fun SessionList(
 private fun SessionRow(
     session: Session,
     showArchived: Boolean,
+    status: String?,
+    pendingPermission: PermissionRequest?,
+    pendingQuestion: QuestionRequest?,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onArchive: () -> Unit,
     onFork: () -> Unit,
     onDelete: () -> Unit,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit,
+    onReply: (String) -> Unit,
+    onSkip: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        ListItem(
-            headlineContent = {
-                Text(
-                    text = session.title ?: session.id,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            supportingContent = session.directory?.let { dir ->
-                { Text(dir, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            },
-            trailingContent = {
-                session.tokens?.let { tokens ->
+        Column(Modifier.fillMaxWidth()) {
+            ListItem(
+                headlineContent = {
                     Text(
-                        text = "${(tokens.input + tokens.output).toLong() / 1000}K tokens",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = session.title ?: session.id,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-            },
-            modifier = Modifier.combinedClickable(
-                onClick = onClick,
-                onLongClick = { showMenu = true },
-            ),
-        )
+                },
+                supportingContent = session.directory?.let { dir ->
+                    { Text(dir, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SessionStatusSpinner(status, Modifier.padding(end = 8.dp))
+                        session.tokens?.let { tokens ->
+                            Text(
+                                text = "${(tokens.input + tokens.output).toLong() / 1000}K tokens",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.combinedClickable(
+                    onClick = onClick,
+                    onLongClick = { showMenu = true },
+                ),
+            )
+            if (pendingPermission != null || pendingQuestion != null) {
+                SessionPendingActions(
+                    permission = pendingPermission,
+                    question = pendingQuestion,
+                    onApprove = onApprove,
+                    onDeny = onDeny,
+                    onReply = onReply,
+                    onSkip = onSkip,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                )
+            }
+        }
         DropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },

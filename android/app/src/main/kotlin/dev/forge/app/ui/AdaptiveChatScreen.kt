@@ -30,7 +30,10 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.window.core.layout.WindowHeightSizeClass
 import androidx.window.core.layout.WindowWidthSizeClass
+import dev.forge.core.model.PermissionRequest
+import dev.forge.core.model.QuestionRequest
 import dev.forge.core.model.Session
 import dev.forge.core.model.SnapshotFileDiff
 import dev.forge.core.model.TokenUsage
@@ -38,18 +41,59 @@ import dev.forge.feature.chat.ChatViewModel
 import dev.forge.feature.chat.TodoItem
 import dev.forge.feature.chat.ui.*
 import dev.forge.feature.sessions.SessionListViewModel
+import dev.forge.feature.sessions.ui.SessionPendingActions
+import dev.forge.feature.sessions.ui.SessionStatusSpinner
+import kotlinx.coroutines.launch
+
+/** How the collapsible left sessions menu is presented. Closed by default in both modes. */
+enum class LeftRailMode { Overlay, InlinePush }
+
+/** Resolved chat layout for the current window — see [chatLayoutFor]. */
+data class ChatLayout(
+    /** Chat fills the whole window (no persistent right panel). */
+    val singlePane: Boolean,
+    /** The right session-info panel is shown persistently ("always available"). */
+    val showRightPanel: Boolean,
+    /** Presentation of the collapsible left sessions menu (always closed by default). */
+    val leftRailMode: LeftRailMode,
+)
 
 /**
- * Adaptive layout host for the chat experience. Layout is driven entirely by
- * WindowWidthSizeClass from the framework — no hardcoded dp breakpoints:
+ * Derive the chat layout from the window's width (height is taken for future
+ * height-aware tuning, e.g. relaxing the right panel on a cramped phone-landscape).
  *
- *   COMPACT  (phone portrait, closed foldable)  → single-pane: ChatScreen only
- *   MEDIUM   (open foldable portrait, tablet)   → two-pane: NavRail + Chat
- *   EXPANDED (open foldable landscape, desktop) → three-pane: NavRail + Chat + InfoPanel
+ * One rule keyed on width: a **compact-width** window (phone portrait, folded cover
+ * display, narrow split-screen) is single-pane with an **overlay** sessions drawer
+ * and no right panel; any **wider** window (phone landscape, foldable, tablet — either
+ * orientation) shows the persistent right info panel with an **inline-push**,
+ * collapsible left rail. The left menu is closed by default in every case.
  *
- * System-bar insets are consumed once here; inner panes opt out via applySystemInsets=false.
- * The nav rail can be toggled in medium/expanded; it auto-resets on fold/unfold.
- * TODOs move from the chat dock to the info panel when the info panel is visible.
+ * Because we key off the *window* size class (not the physical device), split-screen,
+ * freeform, DeX and desktop windows re-evaluate the same rule automatically.
+ */
+internal fun chatLayoutFor(
+    width: WindowWidthSizeClass,
+    @Suppress("UNUSED_PARAMETER") height: WindowHeightSizeClass,
+): ChatLayout {
+    val compactWidth = width == WindowWidthSizeClass.COMPACT
+    return ChatLayout(
+        singlePane = compactWidth,
+        showRightPanel = !compactWidth,
+        leftRailMode = if (compactWidth) LeftRailMode.Overlay else LeftRailMode.InlinePush,
+    )
+}
+
+/**
+ * Adaptive layout host for the chat experience. Layout is inferred by [chatLayoutFor]
+ * from the window's width + height size class.
+ *
+ * The left sessions menu is **closed by default** on every form factor — an overlay
+ * drawer on compact width, an inline-push rail on wider windows — and surfaces a
+ * per-session spinner plus inline permission/question actions so a background session
+ * can be answered from the menu itself. The right info panel is persistent on every
+ * window wider than compact. System-bar insets are consumed once here; inner panes opt
+ * out via applySystemInsets=false. TODOs move from the chat dock to the info panel
+ * whenever the panel is visible.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
@@ -67,16 +111,61 @@ fun AdaptiveChatScreen(
     val sessionListState by sessionListViewModel.uiState.collectAsStateWithLifecycle()
     val chatUiState by chatViewModel.uiState.collectAsStateWithLifecycle()
 
-    val widthClass = currentWindowAdaptiveInfo().windowSizeClass.windowWidthSizeClass
-    val isCompact = widthClass == WindowWidthSizeClass.COMPACT
-    val isExpanded = widthClass == WindowWidthSizeClass.EXPANDED
+    val windowSize = currentWindowAdaptiveInfo().windowSizeClass
+    val layout = remember(windowSize.windowWidthSizeClass, windowSize.windowHeightSizeClass) {
+        chatLayoutFor(windowSize.windowWidthSizeClass, windowSize.windowHeightSizeClass)
+    }
 
-    // Rail auto-shows on non-compact windows. remember(isCompact) resets on fold/unfold
-    // so opening the device always reveals the rail without stale user-collapsed state.
-    var railVisible by remember(isCompact) { mutableStateOf(!isCompact) }
-    val showRail = !isCompact && railVisible
-    // Info panel (right) is only shown in expanded (foldable open landscape / large tablet).
-    val showInfoPanel = isExpanded
+    val scope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // Inline-push rail visibility. Closed by default; re-keyed on layout so a fold/rotate
+    // resets it to closed rather than reopening with stale state.
+    var railOpen by remember(layout) { mutableStateOf(false) }
+    LaunchedEffect(layout) {
+        railOpen = false
+        if (drawerState.isOpen) drawerState.close()
+    }
+
+    // Badge the menu button when a session *other than the current one* needs the user,
+    // so a background permission/question is noticeable while the menu is collapsed.
+    val needsAttentionElsewhere = remember(
+        sessionListState.pendingPermissions,
+        sessionListState.pendingQuestions,
+        sessionId,
+    ) {
+        (sessionListState.pendingPermissions.keys + sessionListState.pendingQuestions.keys)
+            .any { it != sessionId }
+    }
+
+    val toggleMenu: () -> Unit = {
+        when (layout.leftRailMode) {
+            LeftRailMode.Overlay -> scope.launch {
+                if (drawerState.isOpen) drawerState.close() else drawerState.open()
+            }
+            LeftRailMode.InlinePush -> railOpen = !railOpen
+        }
+    }
+
+    val railPane: @Composable (Modifier, () -> Unit) -> Unit = { mod, onDone ->
+        NavRailPane(
+            sessions = sessionListState.sessions,
+            activeSessionId = sessionId,
+            activeDirectory = chatUiState.session?.directory,
+            statuses = sessionListState.statuses,
+            pendingPermissions = sessionListState.pendingPermissions,
+            pendingQuestions = sessionListState.pendingQuestions,
+            onSelectSession = { id -> onDone(); onNavigateToSession(id) },
+            onNewSession = {
+                onDone()
+                sessionListViewModel.createSession { session -> onNavigateToSession(session.id) }
+            },
+            onReplyPermission = sessionListViewModel::replyPermission,
+            onReplyQuestion = sessionListViewModel::replyQuestion,
+            onSkipQuestion = sessionListViewModel::rejectQuestion,
+            onCollapse = onDone,
+            modifier = mod,
+        )
+    }
 
     val aggregatedDiffs = remember(chatUiState.diffs) {
         chatUiState.diffs.values
@@ -90,38 +179,9 @@ fun AdaptiveChatScreen(
             .sortedByDescending { it.additions + it.deletions }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Surface)
-            .systemBarsPadding(),
-    ) {
-        Row(Modifier.fillMaxSize()) {
-            // ── Left: nav rail (non-compact, toggleable) ─────────────────────────
-            AnimatedVisibility(
-                visible = showRail,
-                enter = slideInHorizontally { -it } + expandHorizontally(expandFrom = Alignment.Start),
-                exit = slideOutHorizontally { -it } + shrinkHorizontally(shrinkTowards = Alignment.Start),
-            ) {
-                Row(Modifier.fillMaxHeight()) {
-                    NavRailPane(
-                        sessions = sessionListState.sessions,
-                        activeSessionId = sessionId,
-                        activeDirectory = chatUiState.session?.directory,
-                        onSelectSession = onNavigateToSession,
-                        onNewSession = {
-                            sessionListViewModel.createSession { session ->
-                                onNavigateToSession(session.id)
-                            }
-                        },
-                        onCollapse = { railVisible = false },
-                        modifier = Modifier.width(220.dp).fillMaxHeight(),
-                    )
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
-                }
-            }
-
-            // ── Center: chat ──────────────────────────────────────────────────────
+    // Center pane: chat, plus the persistent right info panel when the layout calls for it.
+    val chatWithRightPanel: @Composable (Modifier) -> Unit = { mod ->
+        Row(mod) {
             // Box wrapper gives ChatScreen's Scaffold a bounded weight slot in the Row.
             Box(Modifier.weight(1f)) {
                 ChatScreen(
@@ -138,17 +198,14 @@ fun AdaptiveChatScreen(
                     isDarkTheme = isDarkTheme,
                     onToggleTheme = onToggleTheme,
                     applySystemInsets = false,
-                    // Hamburger (vs back arrow) whenever the window is non-compact,
-                    // regardless of whether the rail is currently collapsed.
-                    isMultiPane = !isCompact,
-                    onOpenNavRail = { railVisible = !railVisible },
-                    showTodoSheet = !showInfoPanel,
+                    isMultiPane = !layout.singlePane,
+                    onOpenNavRail = toggleMenu,
+                    attentionBadge = needsAttentionElsewhere,
+                    showTodoSheet = !layout.showRightPanel,
                     viewModel = chatViewModel,
                 )
             }
-
-            // ── Right: info panel (expanded only) ─────────────────────────────────
-            if (showInfoPanel) {
+            if (layout.showRightPanel) {
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                 SessionInfoPanel(
                     session = chatUiState.session,
@@ -163,6 +220,41 @@ fun AdaptiveChatScreen(
             }
         }
     }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Surface)
+            .systemBarsPadding(),
+    ) {
+        when (layout.leftRailMode) {
+            // Compact width: the sessions menu floats over the chat as a scrim drawer.
+            LeftRailMode.Overlay -> ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(Modifier.width(300.dp), drawerContainerColor = Surface) {
+                        railPane(Modifier.fillMaxSize()) { scope.launch { drawerState.close() } }
+                    }
+                },
+            ) {
+                chatWithRightPanel(Modifier.fillMaxSize())
+            }
+            // Wider windows: the menu pushes the chat aside (inline), closed by default.
+            LeftRailMode.InlinePush -> Row(Modifier.fillMaxSize()) {
+                AnimatedVisibility(
+                    visible = railOpen,
+                    enter = slideInHorizontally { -it } + expandHorizontally(expandFrom = Alignment.Start),
+                    exit = slideOutHorizontally { -it } + shrinkHorizontally(shrinkTowards = Alignment.Start),
+                ) {
+                    Row(Modifier.fillMaxHeight()) {
+                        railPane(Modifier.width(220.dp).fillMaxHeight()) { railOpen = false }
+                        Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
+                    }
+                }
+                chatWithRightPanel(Modifier.weight(1f))
+            }
+        }
+    }
 }
 
 // ─── Left nav rail pane ────────────────────────────────────────────────────────
@@ -172,8 +264,14 @@ internal fun NavRailPane(
     sessions: List<Session>,
     activeSessionId: String,
     activeDirectory: String?,
+    statuses: Map<String, String>,
+    pendingPermissions: Map<String, PermissionRequest>,
+    pendingQuestions: Map<String, QuestionRequest>,
     onSelectSession: (String) -> Unit,
     onNewSession: () -> Unit,
+    onReplyPermission: (String, Boolean) -> Unit,
+    onReplyQuestion: (String, String) -> Unit,
+    onSkipQuestion: (String) -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -229,7 +327,14 @@ internal fun NavRailPane(
                 SessionRailRow(
                     session = session,
                     isActive = session.id == activeSessionId,
+                    status = statuses[session.id],
+                    pendingPermission = pendingPermissions[session.id],
+                    pendingQuestion = pendingQuestions[session.id],
                     onClick = { onSelectSession(session.id) },
+                    onApprove = { pendingPermissions[session.id]?.let { onReplyPermission(it.id, true) } },
+                    onDeny = { pendingPermissions[session.id]?.let { onReplyPermission(it.id, false) } },
+                    onReply = { answer -> pendingQuestions[session.id]?.let { onReplyQuestion(it.id, answer) } },
+                    onSkip = { pendingQuestions[session.id]?.let { onSkipQuestion(it.id) } },
                 )
             }
         }
@@ -269,23 +374,49 @@ internal fun NavRailPane(
 }
 
 @Composable
-private fun SessionRailRow(session: Session, isActive: Boolean, onClick: () -> Unit) {
-    Box(
+private fun SessionRailRow(
+    session: Session,
+    isActive: Boolean,
+    status: String?,
+    pendingPermission: PermissionRequest?,
+    pendingQuestion: QuestionRequest?,
+    onClick: () -> Unit,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit,
+    onReply: (String) -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .background(if (isActive) SurfaceContainerHigh else Surface)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
-        Text(
-            text = session.title?.takeIf { it.isNotBlank() } ?: "New session",
-            fontSize = 13.sp,
-            fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-            color = if (isActive) OnSurface else OnSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            lineHeight = 16.sp,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = session.title?.takeIf { it.isNotBlank() } ?: "New session",
+                fontSize = 13.sp,
+                fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
+                color = if (isActive) OnSurface else OnSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 16.sp,
+                modifier = Modifier.weight(1f),
+            )
+            SessionStatusSpinner(status, Modifier.padding(start = 6.dp))
+        }
+        if (pendingPermission != null || pendingQuestion != null) {
+            Spacer(Modifier.height(8.dp))
+            SessionPendingActions(
+                permission = pendingPermission,
+                question = pendingQuestion,
+                onApprove = onApprove,
+                onDeny = onDeny,
+                onReply = onReply,
+                onSkip = onSkip,
+            )
+        }
     }
 }
 

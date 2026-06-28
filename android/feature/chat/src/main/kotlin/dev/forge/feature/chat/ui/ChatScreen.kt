@@ -6,7 +6,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Compress
@@ -65,6 +64,7 @@ fun ChatScreen(
     applySystemInsets: Boolean = true,
     isMultiPane: Boolean = false,
     onOpenNavRail: () -> Unit = {},
+    attentionBadge: Boolean = false,
     showTodoSheet: Boolean = true,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
@@ -124,9 +124,7 @@ fun ChatScreen(
     val commandActions = object : ChatCommandActions {
         override val hasDirectory: Boolean get() = sessionDirectory != null
         override fun newSession() = onNewSession()
-        override fun openSessions() {
-            if (isMultiPane) onOpenNavRail() else onNavigateBack()
-        }
+        override fun openSessions() = onOpenNavRail()
         override fun openModelPicker() { showModelPicker = true }
         override fun openTerminal() { sessionDirectory?.let { onOpenTerminal(it) } }
         override fun toggleTheme() = onToggleTheme()
@@ -177,20 +175,17 @@ fun ChatScreen(
                         .height(52.dp)
                         .padding(horizontal = 6.dp),
                 ) {
-                    if (isMultiPane) {
-                        IconButton(onClick = onOpenNavRail, modifier = Modifier.size(42.dp)) {
+                    // Leading icon opens the sessions menu on every form factor (overlay
+                    // drawer on phones, inline rail on wider windows); system back returns
+                    // to the session-list home. A badge appears when a *background* session
+                    // needs the user (pending permission/question).
+                    IconButton(onClick = onOpenNavRail, modifier = Modifier.size(42.dp)) {
+                        BadgedBox(
+                            badge = { if (attentionBadge) Badge(containerColor = Secondary) },
+                        ) {
                             Icon(
                                 Icons.Default.Menu,
                                 contentDescription = "Navigation menu",
-                                tint = OnSurface,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = onNavigateBack, modifier = Modifier.size(42.dp)) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
                                 tint = OnSurface,
                                 modifier = Modifier.size(21.dp),
                             )

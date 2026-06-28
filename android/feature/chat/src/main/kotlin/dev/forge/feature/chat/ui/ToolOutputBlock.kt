@@ -47,6 +47,9 @@ import dev.forge.core.model.ToolStateRunning
  *   write → `Write <filename>` header, the written file content body
  * (design §2 "Bash output" / "Write/code listing" block kinds).
  */
+/** When a tool log is opened it shows at most this many lines; the rest is behind "Show all". */
+private const val TOOL_LOG_PREVIEW_LINES = 7
+
 @Composable
 fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
@@ -119,6 +122,19 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
 
         if (expanded && !body.isNullOrEmpty()) {
             HorizontalDivider(color = Hairline)
+            // Cap the opened log to a short preview; reset to capped each time the block
+            // is opened (remember keyed on `expanded`) so a long log never floods the stream.
+            // Trim so the cap counts the same lines as the header badge (`lineCount`),
+            // otherwise a trailing newline makes the badge say "7 lines" while the button
+            // says "Show all 8 lines" and reveals only a blank trailing line.
+            val lines = remember(body) { body.trim().lines() }
+            var showAll by remember(expanded) { mutableStateOf(false) }
+            val capped = lines.size > TOOL_LOG_PREVIEW_LINES
+            val shown = if (capped && !showAll) {
+                lines.take(TOOL_LOG_PREVIEW_LINES).joinToString("\n")
+            } else {
+                lines.joinToString("\n")
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -126,7 +142,7 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
                     .horizontalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = body,
+                    text = shown,
                     fontFamily = ForgeMono,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -134,6 +150,34 @@ fun ToolOutputBlock(part: ToolPart, modifier: Modifier = Modifier) {
                     softWrap = false,
                     modifier = Modifier.padding(12.dp),
                 )
+            }
+            if (capped) {
+                HorizontalDivider(color = Hairline)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAll = !showAll }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        if (showAll) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = Secondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (showAll) {
+                            "Show less"
+                        } else {
+                            "Show all ${lines.size} lines"
+                        },
+                        fontFamily = ForgeMono,
+                        fontSize = 12.sp,
+                        color = Secondary,
+                    )
+                }
             }
         }
     }

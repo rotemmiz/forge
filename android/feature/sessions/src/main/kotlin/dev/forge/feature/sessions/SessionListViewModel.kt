@@ -65,14 +65,25 @@ data class SessionListUiState(
     val error: String? = null,
 )
 
+/** The slice of [AppState] the session list reads — gates re-projection and is the projection input. */
+internal data class SessionInputs(
+    val sessions: List<Session>,
+    val sessionStatus: Map<String, String>,
+    val permissions: Map<String, List<PermissionRequest>>,
+    val questions: Map<String, List<QuestionRequest>>,
+)
+
+internal fun AppState.toSessionInputs() = SessionInputs(sessions, sessionStatus, permissions, questions)
+
 /**
- * Pure projection from the global store to the list UI state. Kept side-effect-free and
+ * Pure projection from the store slice to the list UI state. Kept side-effect-free and
  * top-level so the child-hiding, tab counts, search/filter, recency ordering, and date
- * grouping can be unit-tested without a ViewModel or coroutines. `now` is injectable so the
- * date buckets are deterministic in tests.
+ * grouping can be unit-tested without a ViewModel or coroutines. Takes [SessionInputs]
+ * (not the whole [AppState]) so its data dependencies are explicit and match the
+ * `distinctUntilChanged` gate exactly. `now` is injectable so date buckets are deterministic.
  */
 internal fun projectSessionList(
-    appState: AppState,
+    inputs: SessionInputs,
     showArchived: Boolean,
     query: String,
     filter: SessionFilter,
@@ -80,15 +91,15 @@ internal fun projectSessionList(
 ): SessionListUiState {
     // Hide sub-agent (`task`) child sessions — they carry a parentID and are an
     // implementation detail of the parent turn, not user-initiated sessions.
-    val topLevel = appState.sessions.filter { it.parentID == null }
+    val topLevel = inputs.sessions.filter { it.parentID == null }
     val (archived, active) = topLevel.partition { it.isArchived }
 
-    val statuses = appState.sessionStatus
+    val statuses = inputs.sessionStatus
     // First pending request per session — the menu shows one actionable affordance per row.
-    val pendingPermissions = appState.permissions
+    val pendingPermissions = inputs.permissions
         .mapNotNull { (id, list) -> list.firstOrNull()?.let { id to it } }
         .toMap()
-    val pendingQuestions = appState.questions
+    val pendingQuestions = inputs.questions
         .mapNotNull { (id, list) -> list.firstOrNull()?.let { id to it } }
         .toMap()
 
@@ -134,14 +145,6 @@ internal fun projectSessionList(
     )
 }
 
-/** The slice of [AppState] the session list reads — used to gate re-projection. */
-private data class SessionInputs(
-    val sessions: List<Session>,
-    val sessionStatus: Map<String, String>,
-    val permissions: Map<String, List<PermissionRequest>>,
-    val questions: Map<String, List<QuestionRequest>>,
-)
-
 @HiltViewModel
 class SessionListViewModel @Inject constructor(
     private val client: ForgeClient,
@@ -160,24 +163,12 @@ class SessionListViewModel @Inject constructor(
             // Only re-project when a field the list actually reads changes — not on every
             // message/part streaming delta, which would otherwise re-sort + re-group + do
             // per-session LocalDate math over the whole global list on the main thread.
-            store.state
-                .map { SessionInputs(it.sessions, it.sessionStatus, it.permissions, it.questions) }
-                .distinctUntilChanged(),
+            store.state.map { it.toSessionInputs() }.distinctUntilChanged(),
             _showArchived,
             _query,
             _filter,
         ) { inputs, showArchived, query, filter ->
-            projectSessionList(
-                AppState(
-                    sessions = inputs.sessions,
-                    sessionStatus = inputs.sessionStatus,
-                    permissions = inputs.permissions,
-                    questions = inputs.questions,
-                ),
-                showArchived,
-                query,
-                filter,
-            )
+            projectSessionList(inputs, showArchived, query, filter)
         }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 

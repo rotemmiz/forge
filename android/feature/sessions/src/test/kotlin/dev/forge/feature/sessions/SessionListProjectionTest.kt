@@ -39,7 +39,7 @@ class SessionListProjectionTest {
         showArchived: Boolean = false,
         query: String = "",
         filter: SessionFilter = SessionFilter.All,
-    ) = projectSessionList(state, showArchived, query, filter, now)
+    ) = projectSessionList(state.toSessionInputs(), showArchived, query, filter, now)
 
     private fun SessionListUiState.ids() = groups.flatMap { it.sessions }.map { it.id }
 

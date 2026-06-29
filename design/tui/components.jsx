@@ -1,5 +1,5 @@
 /* ============================================================
-   FORGE TUI — block renderers & chrome
+   OPCODE42 TUI — block renderers & chrome
    ============================================================ */
 const { useState } = React;
 

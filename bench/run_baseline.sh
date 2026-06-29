@@ -36,8 +36,8 @@ if ! command -v opencode >/dev/null 2>&1; then
 fi
 
 echo "==> building opcoded"
-FORGED_BIN="$(mktemp -d)/opcoded"
-(cd "$REPO_ROOT" && go build -o "$FORGED_BIN" ./cmd/opcoded)
+OPCODED_BIN="$(mktemp -d)/opcoded"
+(cd "$REPO_ROOT" && go build -o "$OPCODED_BIN" ./cmd/opcoded)
 
 # Isolate opencode's HOME so its SQLite DB does not bleed across runs and the
 # bench directory is used as the routed project directory for both daemons.
@@ -47,7 +47,7 @@ BENCH_LOG_DIR="$(mktemp -d)"
 
 echo "==> running baseline (this forks daemons; takes ~1-2 min)"
 cd "$REPO_ROOT"
-BENCH_OPCODE_BIN="$FORGED_BIN" \
+BENCH_OPCODE_BIN="$OPCODED_BIN" \
 BENCH_OPCODE_PORT="$OPCODE_PORT" \
 BENCH_OPENCODE_BIN="$(command -v opencode)" \
 BENCH_OPENCODE_PORT="$OPENCODE_PORT" \

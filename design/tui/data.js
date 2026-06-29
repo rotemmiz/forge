@@ -1,7 +1,7 @@
 /* ============================================================
-   FORGE TUI — scripted agent session
+   OPCODE42 TUI — scripted agent session
    A coding agent adds retry-with-backoff to an HTTP client.
-   Exposed as window.FORGE.
+   Exposed as window.OPCODE42.
    ============================================================ */
 (function () {
   // syntax token helper: arrays of [class, text]
@@ -277,7 +277,7 @@
     { title: "Add retry with exponential backoff to the HTTP client, then …", time: "2:41 PM", current: true },
   ];
 
-  window.FORGE = {
+  window.OPCODE42 = {
     SESSION_TITLE, SEED_PROMPT, EVENTS, SLASH, FILES, PALETTE,
     MODELS, AGENTS, THEMES, SESSIONS, TIMELINE, TASKS,
   };

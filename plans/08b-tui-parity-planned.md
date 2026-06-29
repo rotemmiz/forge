@@ -67,7 +67,7 @@ diff *card* (`UnifiedDiffView`, C4) but nothing like the file-tree-plus-split re
   `filetree.go` (build/flatten/expand mirroring opencode), `render.go` (unified + side-by-side; reuse
   Android's DiffRow gutter grammar — 1ch colored sign + body).
 - Data: `SDK.SessionDiff(sessionID, messageID)` (Opcode42 already calls `GET /session/{id}/diff` in the
-  Android `ForgeClient`; add the Go SDK equivalent). Working-tree source (`vcs.diff`) is **deferred**
+  Android `Opcode42Client`; add the Go SDK equivalent). Working-tree source (`vcs.diff`) is **deferred**
   until the daemon exposes a VCS-diff endpoint (not in the current openapi surface) — ship session-patch
   source first.
 - Open as a full-screen route (not a modal overlay); bind `d` to open on the selected message (needs

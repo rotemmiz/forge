@@ -404,7 +404,7 @@ reality, and say so explicitly" rule.
    `GET /permission`, `POST /question/:id/reply` + `GET /question` (the permission/question managers
    already exist; only the HTTP surface is missing).
 3. **Consume the generated plan-06 Go SDK.** Build the **Go SDK (plan 06) first** as the prerequisite
-   (oapi-codegen REST client + hand-written SSE/WS-PTY clients + a `createForgeClient`-style wrapper
+   (oapi-codegen REST client + hand-written SSE/WS-PTY clients + a `createOpcode42Client`-style wrapper
    doing auth + `x-opencode-directory` injection). The TUI's client layer (U2) consumes it rather
    than hand-rolling.
 

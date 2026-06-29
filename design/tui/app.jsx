@@ -1,8 +1,8 @@
 /* ============================================================
-   FORGE TUI — main application
+   OPCODE42 TUI — main application
    ============================================================ */
 const { useState: uS, useEffect: uE, useRef: uR, useCallback } = React;
-const F = window.FORGE;
+const F = window.OPCODE42;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

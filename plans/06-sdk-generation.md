@@ -57,7 +57,7 @@ All citations are from the reference source at `/Users/rotemmiz/git/opencode`.
 - **`createOpencodeServer`** (lines 22–100): spawns `opencode serve --hostname --port` as a child
   process, polls stdout for `"opencode server listening on <url>"` (lines 55–61), resolves with
   the URL. Timeout: configurable, default 5000ms (lines 29–30).
-- **Relevance to Opcode42:** Opcode42's own `createForgeServer` wrapper will mirror this pattern —
+- **Relevance to Opcode42:** Opcode42's own `createOpcode42Server` wrapper will mirror this pattern —
   spawning `opcode42 serve` and polling for the same ready line. Wire-compat means the same
   SDK server bootstrap works for both daemons.
 
@@ -144,14 +144,14 @@ output-options:
 **Wrapper:** `opcode42/sdk/go/client.go` — hand-written wrapper around the generated client:
 
 ```go
-type ForgeClient struct {
+type Opcode42Client struct {
     inner     *gen.ClientWithResponses
     baseURL   string
     directory string
     auth      string  // "Basic <b64>" or ""
 }
 
-func NewForgeClient(baseURL, directory, username, password string) *ForgeClient {
+func NewOpcode42Client(baseURL, directory, username, password string) *Opcode42Client {
     auth := ""
     if username != "" {
         auth = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
@@ -167,7 +167,7 @@ func NewForgeClient(baseURL, directory, username, password string) *ForgeClient 
             return nil
         }),
     )
-    return &ForgeClient{inner: inner, baseURL: baseURL, directory: directory, auth: auth}
+    return &Opcode42Client{inner: inner, baseURL: baseURL, directory: directory, auth: auth}
 }
 ```
 
@@ -193,10 +193,10 @@ openapi-generator generate \
 is the de facto standard for JVM/Kotlin; `jvm-okhttp4` + `kotlinx.serialization` is idiomatic
 for Android.
 
-**Wrapper:** `opcode42/sdk/kotlin/src/main/kotlin/ForgeClient.kt`
+**Wrapper:** `opcode42/sdk/kotlin/src/main/kotlin/Opcode42Client.kt`
 
 ```kotlin
-class ForgeClient(
+class Opcode42Client(
     private val baseUrl: String,
     private val directory: String = "",
     private val username: String = "",
@@ -218,8 +218,8 @@ class ForgeClient(
         .build()
 
     // SSE and WS-PTY clients are hand-written — see below
-    val sse: ForgeSseClient = ForgeSseClient(baseUrl, httpClient)
-    val pty: ForgePtyClient = ForgePtyClient(baseUrl, httpClient)
+    val sse: Opcode42SseClient = Opcode42SseClient(baseUrl, httpClient)
+    val pty: Opcode42PtyClient = Opcode42PtyClient(baseUrl, httpClient)
 }
 ```
 
@@ -236,7 +236,7 @@ openapi-generator generate \
   -i opcode42/sdk/openapi.json \
   -g swift5 \
   -o opcode42/sdk/swift \
-  --additional-properties=projectName=ForgeClient,responseAs=AsyncAwait
+  --additional-properties=projectName=Opcode42Client,responseAs=AsyncAwait
 ```
 
 Swift SSE and WS-PTY layers are hand-written (same design as Kotlin, see below). Deferred
@@ -297,13 +297,13 @@ func (c *SSEClient) Subscribe(ctx context.Context, path string, params url.Value
 **Heartbeat timeout:** opencode sends `server.heartbeat` every ~30s. If 60s pass with no
 event (including heartbeat), the client closes and reconnects. This handles silent server drops.
 
-### Kotlin SSE Client (`opcode42/sdk/kotlin/src/main/kotlin/ForgeSseClient.kt`)
+### Kotlin SSE Client (`opcode42/sdk/kotlin/src/main/kotlin/Opcode42SseClient.kt`)
 
 Uses OkHttp's `EventSource` API (`com.squareup.okhttp3:okhttp-sse`):
 
 ```kotlin
-class ForgeSseClient(private val baseUrl: String, private val client: OkHttpClient) {
-    fun subscribe(path: String, params: Map<String, String> = emptyMap()): Flow<ForgeEvent> = callbackFlow {
+class Opcode42SseClient(private val baseUrl: String, private val client: OkHttpClient) {
+    fun subscribe(path: String, params: Map<String, String> = emptyMap()): Flow<Opcode42Event> = callbackFlow {
         val url = HttpUrl.parse(baseUrl + path)!!.newBuilder()
             .apply { params.forEach { (k, v) -> addQueryParameter(k, v) } }
             .build()
@@ -311,7 +311,7 @@ class ForgeSseClient(private val baseUrl: String, private val client: OkHttpClie
         val listener = object : EventSourceListener() {
             override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
                 // data is the JSON body; type is the SSE event type field (or use id field)
-                val event = Json.decodeFromString<ForgeEvent>(data)
+                val event = Json.decodeFromString<Opcode42Event>(data)
                 trySend(event)
             }
             override fun onFailure(es: EventSource, t: Throwable?, response: Response?) {
@@ -394,12 +394,12 @@ func (c *PTYClient) readLoop() {
 }
 ```
 
-### Kotlin WS-PTY Client (`opcode42/sdk/kotlin/src/main/kotlin/ForgePtyClient.kt`)
+### Kotlin WS-PTY Client (`opcode42/sdk/kotlin/src/main/kotlin/Opcode42PtyClient.kt`)
 
 Uses OkHttp WebSocket:
 
 ```kotlin
-class ForgePtyClient(private val baseUrl: String, private val client: OkHttpClient) {
+class Opcode42PtyClient(private val baseUrl: String, private val client: OkHttpClient) {
     fun connect(ptyID: String, authToken: String? = null): PtyConnection {
         val wsUrl = baseUrl.replace("http", "ws") + "/pty/$ptyID/connect" +
             (if (authToken != null) "?auth_token=$authToken" else "")
@@ -517,7 +517,7 @@ func TestSSESubscribe(t *testing.T) {
 **Kotlin (Android instrumented or JVM unit test):**
 ```kotlin
 @Test fun `session list round-trip against opencode`() = runBlocking {
-    val client = ForgeClient(opencodeUrl, "/tmp/test-dir")
+    val client = Opcode42Client(opencodeUrl, "/tmp/test-dir")
     val sessions = client.session.list()
     assertNotNull(sessions)
 }

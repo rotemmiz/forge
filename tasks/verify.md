@@ -409,7 +409,7 @@ dual-run conformance.
 - [x] (automated 2026-05-31) `POST /permission/:id/reply`, `POST /question/:id/reply`,
       `POST /question/:id/reject`, `GET /session/:id/todo` return opencode-identical shapes/status
       (live-smoke vs 127.0.0.1:4096 + dual-run: all four parity scenarios pass).
-- [ ] TUI-AGAINST-FORGE setup. Run a Opcode42 daemon and point the TUI at it (NOT opencode):
+- [ ] TUI-AGAINST-OPCODE42 setup. Run a Opcode42 daemon and point the TUI at it (NOT opencode):
       `go build -o /tmp/opcoded ./cmd/opcoded && /tmp/opcoded --port 4097 --host 127.0.0.1`
       then `go run ./cmd/opcode-tui --url http://127.0.0.1:4097 --dir "$PWD" --provider <id> --model <id>`
       (a provider API key must be in the env so the agent can run tools).
@@ -588,7 +588,7 @@ The Android app now acquires its FCM token, registers it with the daemon relay
 token rotation, `DELETE /push/register/{deviceID}` when the active server is removed), renders
 received pushes as notifications, and deep-links a notification tap to the relevant Chat
 session (`data.session_id`). The whole path is gated on Firebase being configured for the build
-(`PushConfig`): the FCM `ForgeMessagingService` is `android:enabled="false"` in the manifest and
+(`PushConfig`): the FCM `Opcode42MessagingService` is `android:enabled="false"` in the manifest and
 only enabled at runtime when a Firebase config is present, so the app builds and runs on the
 no-`google-services.json` path (the CI path) with push as a clean no-op. The token-register body,
 dedup/refresh/unregister logic, 404-as-success on DELETE, and the `{event_type, session_id}`

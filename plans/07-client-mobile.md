@@ -567,7 +567,7 @@ fallback CWD) **and** the Opcode42 daemon (whose `store.List` already returns ev
 fan-out just dedupes to the same set). The connection's working-directory is now truly optional
 (`AddServerScreen` field relabeled "leave blank to see all projects"); opening any session uses that
 session's own `directory` for the per-directory parts stream, so cross-project open/stream still works.
-The new `Project`/`ProjectTime` models live in `core/model`; `ForgeClient.listProjects()` decodes them.
+The new `Project`/`ProjectTime` models live in `core/model`; `Opcode42Client.listProjects()` decodes them.
 
 **Pure projection** `projectSessionList(appState, showArchived, query, filter, now)`
 (`SessionListViewModel.kt`):

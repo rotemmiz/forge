@@ -13,7 +13,10 @@ META=(':!plans/14-rename-opcode42.md' ':!scripts/check-rename.sh')
 #     clone URL / container registry / goreleaser release name stay "forge" until
 #     `gh repo rename` (plans/14 §3). These are the ONLY allowed "forge" lines.
 # (3) English word "forget" / "fire-and-forget" contains the substring "forge".
-SEAM='github\.com/rotemmiz/forge|ghcr\.io/rotemmiz/forge|^[^:]*:[0-9]+:[[:space:]]*name: forge|forget'
+# The github.com term is anchored to NOT match a trailing "/path", so a genuinely
+# broken module import (github.com/rotemmiz/forge/internal/...) is NOT masked by
+# the clone-URL seam and still trips the gate.
+SEAM='github\.com/rotemmiz/forge([^/]|$)|ghcr\.io/rotemmiz/forge|^[^:]*:[0-9]+:[[:space:]]*name: forge|forget'
 
 # --- (1) NEGATIVE: no stray "forge" outside meta-files / seam / "forget" -----
 stray="$(git grep -in -e forge -- . "${META[@]}" | grep -viE "$SEAM" || true)"
@@ -31,9 +34,14 @@ else echo "OK no tracked path contains 'forge'"; fi
 for s in 'x-opencode-directory' '_opencode._tcp' 'openapi-reference.json'; do
   git grep -q -F "$s" -- . || { echo "X protected opencode string vanished: $s"; fail=1; }
 done
+# Count over code/docs but NOT the meta-files (the plan + this script mention
+# "opencode" many times by nature; excluding them keeps the tripwire stable
+# against edits to the rename's own documentation).
 base="$(cat .rename-opencode-count 2>/dev/null || echo '')"
-now="$(git grep -I -i -o -e opencode -- . | wc -l | tr -d ' ')"
-if [[ -n "$base" && "$now" != "$base" ]]; then
+now="$(git grep -I -i -o -e opencode -- . "${META[@]}" | wc -l | tr -d ' ')"
+if [[ -z "$base" ]]; then
+  echo "X .rename-opencode-count baseline missing — cannot verify the opencode wire-count tripwire"; fail=1
+elif [[ "$now" != "$base" ]]; then
   echo "X opencode token count changed: $base -> $now (did a sweep hit opencode?)"; fail=1
 else echo "OK opencode wire identifiers intact ($now)"; fi
 

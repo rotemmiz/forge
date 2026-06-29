@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.util.Base64
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -149,12 +150,24 @@ fun PromptInput(
         onPartial = { spoken -> text = mergeTranscript(baseText, spoken) },
         onFinal = { spoken -> text = mergeTranscript(baseText, spoken) },
     )
+    // Anchor the field tail and begin dictation. Both the already-granted path and
+    // the permission callback funnel through here so `baseText` is captured exactly
+    // once, immediately before the recognizer starts.
+    fun startDictation() {
+        baseText = text
+        voice.start()
+    }
     val audioPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            baseText = text
-            voice.start()
+            startDictation()
+        } else {
+            // Denial (incl. permanent "don't ask again", which returns instantly
+            // with no dialog) would otherwise be a silent dead end.
+            Toast.makeText(
+                context, "Microphone access is needed for voice input", Toast.LENGTH_SHORT,
+            ).show()
         }
     }
     fun toggleVoice() {
@@ -162,11 +175,10 @@ fun PromptInput(
             voice.stop()
             return
         }
-        baseText = text
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
-        if (granted) voice.start() else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+        if (granted) startDictation() else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     Column(

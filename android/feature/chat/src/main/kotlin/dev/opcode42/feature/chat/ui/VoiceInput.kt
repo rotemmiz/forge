@@ -30,6 +30,9 @@ private const val VOICE_TAG = "VoiceInput"
  * finalized utterance is delivered once via `onFinal`. The caller decides how to
  * merge these into the field (see [PromptInput], which anchors them to the text
  * present when listening began).
+ *
+ * If a misbehaving provider never calls back after [start], [isListening] stays
+ * true (the mic stays lit); a second tap routes to [stop] and recovers it.
  */
 @Stable
 class VoiceInputController internal constructor(
@@ -45,18 +48,25 @@ class VoiceInputController internal constructor(
 
     private var recognizer: SpeechRecognizer? = null
 
+    // SpeechRecognizer dispatches callbacks via a main-thread Handler, so a
+    // partial/final result can already be queued when the user cancels. cancel()
+    // and destroy() drop this flag so those late callbacks are ignored; stop()
+    // leaves it set because we still want the final result it triggers.
+    private var acceptResults = true
+
     private val listener = object : RecognitionListener {
         override fun onPartialResults(partialResults: Bundle?) {
+            if (!acceptResults) return
             partialResults?.firstText()?.let(onPartial)
         }
 
         override fun onResults(results: Bundle?) {
-            results?.firstText()?.let(onFinal)
+            if (acceptResults) results?.firstText()?.let(onFinal)
             isListening = false
         }
 
         override fun onError(error: Int) {
-            Log.d(VOICE_TAG, "recognition error: $error")
+            Log.w(VOICE_TAG, "recognition error: $error")
             isListening = false
         }
 
@@ -78,9 +88,10 @@ class VoiceInputController internal constructor(
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
         }
+        acceptResults = true
         isListening = true
         r.startListening(intent)
     }
@@ -94,17 +105,17 @@ class VoiceInputController internal constructor(
         isListening = false
     }
 
-    fun toggle() = if (isListening) stop() else start()
-
     /** Abort the session, discarding any pending result. Used when the field is sent. */
     fun cancel() {
         if (!isListening) return
+        acceptResults = false
         recognizer?.cancel()
         isListening = false
     }
 
     /** Release the underlying recognizer. Call once when the composable leaves. */
     fun destroy() {
+        acceptResults = false
         recognizer?.destroy()
         recognizer = null
         isListening = false

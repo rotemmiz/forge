@@ -4,6 +4,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Make the on-device speech recognition service visible under package
+         visibility filtering (targetSdk 30+), so isRecognitionAvailable() and
+         SpeechRecognizer binding work for voice dictation. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".Opcode42App"
         android:allowBackup="true"

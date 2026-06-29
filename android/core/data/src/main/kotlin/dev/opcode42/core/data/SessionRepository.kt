@@ -73,14 +73,19 @@ class DefaultSessionRepository @Inject constructor(
             .filterNotNull()
             .filter { it != "/" } // root worktree of the synthetic "global" project
             .toSet()
-        val sessions = coroutineScope {
-            val perDir = dirs.map { dir ->
-                async { runCatching { client.listSessions(dir) }.getOrDefault(emptyList()) }
-            }
-            val global = async { runCatching { client.listSessions(null) }.getOrDefault(emptyList()) }
-            perDir.awaitAll().flatten() + global.await()
+        val results: List<Result<List<Session>>> = coroutineScope {
+            val perDir = dirs.map { dir -> async { runCatching { client.listSessions(dir) } } }
+            // The global (no-directory) call always runs: covers the daemon's default/CWD project.
+            val global = async { runCatching { client.listSessions(null) } }
+            perDir.awaitAll() + global.await()
         }
-        sessions.distinctBy { it.id }.forEach { store.dispatch(AppEvent.SessionUpdated(it)) }
+        // One unreachable directory must never blank the list — partial success still applies. But
+        // if EVERY query failed, the daemon is unreachable/unconfigured; surface that so the UI can
+        // offer a retry instead of a misleading "no sessions" empty state.
+        if (results.all { it.isFailure }) throw results.firstNotNullOf { it.exceptionOrNull() }
+        results.mapNotNull { it.getOrNull() }.flatten()
+            .distinctBy { it.id }
+            .forEach { store.dispatch(AppEvent.SessionUpdated(it)) }
     }
 
     override suspend fun create(directory: String?): Result<Session> = resultOf {

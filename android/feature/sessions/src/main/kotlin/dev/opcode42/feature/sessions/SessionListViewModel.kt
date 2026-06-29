@@ -162,7 +162,7 @@ class SessionListViewModel @Inject constructor(
     /** Transient list status (refresh spinner + a load error), merged into uiState below. */
     private val _status = MutableStateFlow(ListStatus())
 
-    /** One-shot events (snackbars). BUFFERED so emitting never suspends the emitter. */
+    /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
     private val _events = Channel<SessionListEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
@@ -187,9 +187,9 @@ class SessionListViewModel @Inject constructor(
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
 
-    private suspend fun emitError(action: String, cause: Throwable) {
+    private fun emitError(action: String, cause: Throwable) {
         android.util.Log.w("SessionListVM", "$action failed", cause)
-        _events.send(SessionListEvent.ShowError(cause.toUserMessage()))
+        _events.trySend(SessionListEvent.ShowError(cause.toUserMessage()))
     }
 
     init {

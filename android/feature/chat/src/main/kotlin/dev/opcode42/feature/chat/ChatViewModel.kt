@@ -64,7 +64,7 @@ class ChatViewModel @Inject constructor(
     private val _isSending = MutableStateFlow(false)
     private val _isLoading = MutableStateFlow(false)
 
-    /** One-shot events (snackbars). BUFFERED so emitting never suspends the emitter. */
+    /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
     private val _events = Channel<ChatEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
@@ -193,9 +193,9 @@ class ChatViewModel @Inject constructor(
     }
 
     /** Log a failed user action and surface it as a one-shot snackbar event. */
-    private suspend fun emitError(action: String, cause: Throwable) {
+    private fun emitError(action: String, cause: Throwable) {
         android.util.Log.w("ChatVM", "$action failed", cause)
-        _events.send(ChatEvent.ShowError(cause.toUserMessage()))
+        _events.trySend(ChatEvent.ShowError(cause.toUserMessage()))
     }
 
     /** A7/C5 — Optimistic prompt submit with optional file attachments */

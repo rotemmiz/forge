@@ -25,16 +25,21 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.opcode42.core.model.Session
+import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,7 +53,18 @@ fun SessionListScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isCreating by viewModel.isCreating.collectAsStateWithLifecycle()
 
+    // Surface one-shot errors (a failed rename/archive/delete/create/reply) as a snackbar.
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is SessionListEvent.ShowError -> snackbarHostState.showSnackbar(event.message)
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(if (uiState.showArchived) "Archived" else "Opcode42") },
@@ -88,9 +104,18 @@ fun SessionListScreen(
         },
     ) { padding ->
         when {
-            uiState.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            // Spinner / error only when there's nothing to show yet — a refresh on reconnect must
+            // not flash over an already-populated list.
+            uiState.isLoading && uiState.allCount == 0 && uiState.archivedCount == 0 ->
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            uiState.error != null && uiState.allCount == 0 && uiState.archivedCount == 0 ->
+                SessionListError(
+                    message = uiState.error!!,
+                    onRetry = viewModel::loadSessions,
+                    modifier = Modifier.padding(padding),
+                )
             uiState.showArchived && uiState.archivedCount == 0 -> EmptyArchivedList(Modifier.padding(padding))
             !uiState.showArchived && uiState.allCount == 0 -> EmptySessionList(
                 onAddServer = onAddServerClick,
@@ -140,6 +165,25 @@ private fun EmptySessionList(onAddServer: () -> Unit, onNewSession: () -> Unit) 
         OutlinedButton(onClick = onAddServer) { Text("Add Server") }
         Spacer(Modifier.height(8.dp))
         Button(onClick = onNewSession) { Text("New Session") }
+    }
+}
+
+@Composable
+private fun SessionListError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Couldn't load sessions", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onRetry) { Text("Retry") }
     }
 }
 

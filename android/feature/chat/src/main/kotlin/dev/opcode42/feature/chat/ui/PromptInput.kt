@@ -7,6 +7,10 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -33,6 +38,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -89,9 +95,12 @@ fun PromptInput(
 
     var text by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
-    // Field contents at the moment dictation began; spoken text is appended to it
-    // so partial/final transcripts replace each other cleanly instead of stacking.
+    // `baseText` advances as each utterance is finalized: live partials append to
+    // it, then the final commits and becomes the new anchor for the next utterance.
+    // `preDictationText` is the field as it was before the mic was tapped — what
+    // Cancel restores.
     var baseText by remember { mutableStateOf("") }
+    var preDictationText by remember { mutableStateOf("") }
 
     // `/cmd` is active only while the text is a single leading slash token.
     val slashQuery: String? = remember(text) {
@@ -144,18 +153,29 @@ fun PromptInput(
         }
     }
 
-    // Speech-to-text: partial + final transcripts both replace the spoken tail of
-    // the field, anchored to `baseText` captured when listening started.
+    // Continuous speech-to-text. Live partials preview against the current anchor;
+    // each final commits — advancing `baseText` — so the next utterance appends
+    // after it with a space instead of overwriting.
     val voice = rememberVoiceInput(
         onPartial = { spoken -> text = mergeTranscript(baseText, spoken) },
-        onFinal = { spoken -> text = mergeTranscript(baseText, spoken) },
+        onFinal = { spoken ->
+            baseText = mergeTranscript(baseText, spoken)
+            text = baseText
+        },
     )
-    // Anchor the field tail and begin dictation. Both the already-granted path and
-    // the permission callback funnel through here so `baseText` is captured exactly
+    // Anchor the field and begin dictation. Both the already-granted path and the
+    // permission callback funnel through here so the anchors are captured exactly
     // once, immediately before the recognizer starts.
     fun startDictation() {
+        preDictationText = text
         baseText = text
         voice.start()
+    }
+    // Stop listening and throw away everything dictated this session.
+    fun cancelDictation() {
+        voice.cancel()
+        text = preDictationText
+        baseText = preDictationText
     }
     val audioPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -269,24 +289,70 @@ fun PromptInput(
                 },
             )
 
-            // Voice dictation — shown only when a recognition provider exists on-device.
-            // Turns red while listening; tapping again stops and keeps what was heard.
+            // ── Voice dictation ── shown only when a recognition provider exists.
             if (voice.isAvailable) {
-                IconButton(
-                    onClick = { toggleVoice() },
-                    enabled = enabled || voice.isListening,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Mic,
-                        contentDescription = if (voice.isListening) "Stop dictation" else "Dictate",
-                        tint = when {
-                            voice.isListening -> Error
-                            enabled -> OnSurfaceVariant
-                            else -> OnSurfaceFaint
-                        },
-                        modifier = Modifier.size(19.dp),
-                    )
+                // Cancel (✕): present only while listening — stop and discard this
+                // session, restoring the field to its pre-dictation contents.
+                AnimatedVisibility(visible = voice.isListening) {
+                    IconButton(
+                        onClick = { cancelDictation() },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cancel dictation",
+                            tint = OnSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+
+                // Mic: tap to start; while listening it is the stop-and-keep button,
+                // haloed by a circle that springs with the live voice amplitude.
+                // `pulse` eases over the ~10Hz amplitude envelope for a fluid feel;
+                // it is read inside graphicsLayer so frames update without recomposing.
+                val pulse by animateFloatAsState(
+                    targetValue = if (voice.isListening) voice.amplitude else 0f,
+                    // Envelope shaping lives in the controller (fast attack / slow
+                    // release); the spring just glides between frames. Lightly
+                    // under-damped for a touch of life without visible wobble.
+                    animationSpec = spring(
+                        dampingRatio = 0.8f,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    label = "micPulse",
+                )
+                Box(contentAlignment = Alignment.Center) {
+                    if (voice.isListening) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer {
+                                    val s = 1f + pulse * 1.1f
+                                    scaleX = s
+                                    scaleY = s
+                                    alpha = 0.18f + pulse * 0.22f
+                                }
+                                .clip(CircleShape)
+                                .background(Error),
+                        )
+                    }
+                    IconButton(
+                        onClick = { toggleVoice() },
+                        enabled = enabled || voice.isListening,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = if (voice.isListening) "Stop dictation" else "Dictate",
+                            tint = when {
+                                voice.isListening -> Error
+                                enabled -> OnSurfaceVariant
+                                else -> OnSurfaceFaint
+                            },
+                            modifier = Modifier.size(19.dp),
+                        )
+                    }
                 }
             }
 

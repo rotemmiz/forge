@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/rotemmiz/forge/internal/engine/catalog"
-	"github.com/rotemmiz/forge/internal/engine/provider/anthropic"
-	"github.com/rotemmiz/forge/internal/engine/provider/openai"
-	"github.com/rotemmiz/forge/internal/oauth"
+	"github.com/rotemmiz/opcode42/internal/engine/catalog"
+	"github.com/rotemmiz/opcode42/internal/engine/provider/anthropic"
+	"github.com/rotemmiz/opcode42/internal/engine/provider/openai"
+	"github.com/rotemmiz/opcode42/internal/oauth"
 )
 
 // stubAccessor is a deterministic credresolve.Accessor — no live provider/HTTP.

@@ -1,9 +1,9 @@
-// Command forge-tui is the Forge terminal client (plan 08): a Bubble Tea app
-// that attaches to a running Forge or opencode daemon over its HTTP+SSE wire
+// Command opcode-tui is the Opcode42 terminal client (plan 08): a Bubble Tea app
+// that attaches to a running Opcode42 or opencode daemon over its HTTP+SSE wire
 // protocol. It owns no agent state — the daemon is the source of truth.
 //
-//	forge-tui --url http://127.0.0.1:4096 --dir "$PWD"
-//	forge-tui --theme forge-light           # pin theme for deterministic capture
+//	opcode-tui --url http://127.0.0.1:4096 --dir "$PWD"
+//	opcode-tui --theme opcode42-light           # pin theme for deterministic capture
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/rotemmiz/forge/internal/tui"
+	"github.com/rotemmiz/opcode42/internal/tui"
 )
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 	password := flag.String("password", "", "Basic auth password")
 	provider := flag.String("provider", "", "prompt model provider id (else resolved from /config)")
 	modelID := flag.String("model", "", "prompt model id")
-	themeFlag := flag.String("theme", "", "theme name override (e.g. forge-dark, forge-light, forge-mono); empty = auto-pick or KV-pinned")
+	themeFlag := flag.String("theme", "", "theme name override (e.g. opcode42-dark, opcode42-light, opcode42-mono); empty = auto-pick or KV-pinned")
 	flag.Parse()
 
 	model := tui.New(tui.Config{
@@ -36,7 +36,7 @@ func main() {
 	}).Restore() // restore persisted theme/model/history + enable persistence
 
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "forge-tui:", err)
+		fmt.Fprintln(os.Stderr, "opcode-tui:", err)
 		os.Exit(1)
 	}
 }

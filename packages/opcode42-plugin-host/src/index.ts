@@ -1,7 +1,7 @@
 /**
- * Forge plugin host — Node/Bun sidecar (plan 05).
+ * Opcode42 plugin host — Node/Bun sidecar (plan 05).
  *
- * Loads opencode-format plugins and bridges their hooks to the Forge Go daemon
+ * Loads opencode-format plugins and bridges their hooks to the Opcode42 Go daemon
  * over JSON-RPC 2.0 on a local unix socket. Framing matches the Go side
  * (internal/pluginbridge/jsonrpc.go): a 4-byte big-endian uint32 length header
  * followed by the UTF-8 JSON body.
@@ -79,21 +79,21 @@ function encodeFrame(v: unknown): Buffer {
 
 function log(...args: unknown[]) {
   // eslint-disable-next-line no-console
-  console.error("[forge-plugin-host]", ...args)
+  console.error("[opcode42-plugin-host]", ...args)
 }
 
 // ---------------------------------------------------------------------------
 // Environment / config
 // ---------------------------------------------------------------------------
 
-const socketPath = process.env.FORGE_PLUGIN_SOCKET
-const forgeUrl = process.env.FORGE_URL ?? ""
-const authHeader = process.env.FORGE_AUTH_HEADER ?? ""
-const directory = process.env.FORGE_DIRECTORY ?? process.cwd()
-const specsRaw = process.env.FORGE_PLUGIN_SPECS ?? "[]"
+const socketPath = process.env.OPCODE_PLUGIN_SOCKET
+const opcode42Url = process.env.OPCODE_URL ?? ""
+const authHeader = process.env.OPCODE_AUTH_HEADER ?? ""
+const directory = process.env.OPCODE_DIRECTORY ?? process.cwd()
+const specsRaw = process.env.OPCODE_PLUGIN_SPECS ?? "[]"
 
 if (!socketPath) {
-  log("FORGE_PLUGIN_SOCKET is required")
+  log("OPCODE_PLUGIN_SOCKET is required")
   process.exit(2)
 }
 
@@ -106,7 +106,7 @@ try {
     configuredSpecs = parsed.map((s) => (Array.isArray(s) ? s[0] : s)).filter((s) => typeof s === "string")
   }
 } catch {
-  log("FORGE_PLUGIN_SPECS is not valid JSON; ignoring")
+  log("OPCODE_PLUGIN_SPECS is not valid JSON; ignoring")
 }
 
 // ---------------------------------------------------------------------------
@@ -162,13 +162,13 @@ function discoverLocalPlugins(dir: string): string[] {
 
 /** Try to build the SDK client; tolerate the package being absent. */
 async function makeClient(): Promise<unknown> {
-  if (!forgeUrl) return undefined
+  if (!opcode42Url) return undefined
   try {
     // @ts-expect-error optional dependency resolved at runtime
     const mod: any = await import("@opencode-ai/sdk/v2/client").catch(() => import("@opencode-ai/sdk"))
     const create = mod.createOpencodeClient ?? mod.default?.createOpencodeClient
     if (typeof create !== "function") return undefined
-    return create({ baseUrl: forgeUrl, headers: { authorization: authHeader }, directory })
+    return create({ baseUrl: opcode42Url, headers: { authorization: authHeader }, directory })
   } catch (err) {
     log("SDK client unavailable; plugins using input.client will fail", err)
     return undefined
@@ -349,7 +349,7 @@ async function main() {
     project: { id: path.basename(directory), worktree: directory },
     directory,
     worktree: directory,
-    serverUrl: forgeUrl ? new URL(forgeUrl) : new URL("http://localhost"),
+    serverUrl: opcode42Url ? new URL(opcode42Url) : new URL("http://localhost"),
     $: bunShell,
   }
 

@@ -1,4 +1,4 @@
-// Command forged is the Forge daemon: a ground-up, interop-first alternative
+// Command opcoded is the Opcode42 daemon: a ground-up, interop-first alternative
 // to opencode that is wire-compatible with its HTTP+SSE+WebSocket API.
 //
 // It serves GET /global/health, GET /doc, GET /config, session CRUD, the SSE
@@ -23,27 +23,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rotemmiz/forge/internal/auth"
-	"github.com/rotemmiz/forge/internal/bus"
-	"github.com/rotemmiz/forge/internal/config"
-	"github.com/rotemmiz/forge/internal/engine"
-	"github.com/rotemmiz/forge/internal/engine/catalog"
-	"github.com/rotemmiz/forge/internal/engine/llm"
-	"github.com/rotemmiz/forge/internal/engine/message"
-	"github.com/rotemmiz/forge/internal/engine/provider/anthropic"
-	"github.com/rotemmiz/forge/internal/engine/provider/credresolve"
-	"github.com/rotemmiz/forge/internal/engine/provider/openai"
-	"github.com/rotemmiz/forge/internal/engine/registry"
-	"github.com/rotemmiz/forge/internal/engine/tool"
-	"github.com/rotemmiz/forge/internal/instance"
-	"github.com/rotemmiz/forge/internal/mdns"
-	"github.com/rotemmiz/forge/internal/oauth"
-	"github.com/rotemmiz/forge/internal/pluginbridge"
-	"github.com/rotemmiz/forge/internal/push"
-	"github.com/rotemmiz/forge/internal/server"
-	"github.com/rotemmiz/forge/internal/session"
-	"github.com/rotemmiz/forge/internal/storage"
-	"github.com/rotemmiz/forge/internal/websearch"
+	"github.com/rotemmiz/opcode42/internal/auth"
+	"github.com/rotemmiz/opcode42/internal/bus"
+	"github.com/rotemmiz/opcode42/internal/config"
+	"github.com/rotemmiz/opcode42/internal/engine"
+	"github.com/rotemmiz/opcode42/internal/engine/catalog"
+	"github.com/rotemmiz/opcode42/internal/engine/llm"
+	"github.com/rotemmiz/opcode42/internal/engine/message"
+	"github.com/rotemmiz/opcode42/internal/engine/provider/anthropic"
+	"github.com/rotemmiz/opcode42/internal/engine/provider/credresolve"
+	"github.com/rotemmiz/opcode42/internal/engine/provider/openai"
+	"github.com/rotemmiz/opcode42/internal/engine/registry"
+	"github.com/rotemmiz/opcode42/internal/engine/tool"
+	"github.com/rotemmiz/opcode42/internal/instance"
+	"github.com/rotemmiz/opcode42/internal/mdns"
+	"github.com/rotemmiz/opcode42/internal/oauth"
+	"github.com/rotemmiz/opcode42/internal/pluginbridge"
+	"github.com/rotemmiz/opcode42/internal/push"
+	"github.com/rotemmiz/opcode42/internal/server"
+	"github.com/rotemmiz/opcode42/internal/session"
+	"github.com/rotemmiz/opcode42/internal/storage"
+	"github.com/rotemmiz/opcode42/internal/websearch"
 )
 
 // version is the daemon version, overridable at build time via
@@ -60,7 +60,7 @@ type options struct {
 	// fcmServiceAccount is the path to a Google service-account JSON key enabling
 	// the push relay (plan 13 §13.8). Empty ⇒ push relay runs in no-op mode
 	// (device registration persists but no FCM send is attempted). Resolved from
-	// --fcm-service-account or FORGE_FCM_SERVICE_ACCOUNT.
+	// --fcm-service-account or OPCODE_FCM_SERVICE_ACCOUNT.
 	fcmServiceAccount string
 	// pluginHost enables the flag-gated opencode-plugin sidecar (plan 05). Off
 	// by default; never affects the default daemon path.
@@ -98,12 +98,12 @@ func main() {
 		mdns:              *enableMDNS,
 		mdnsDomain:        *mdnsDomain,
 		oauthProxyURL:     *oauthProxyURL,
-		fcmServiceAccount: firstNonEmpty(*fcmServiceAccount, os.Getenv("FORGE_FCM_SERVICE_ACCOUNT")),
-		pluginHost:        *pluginHost || os.Getenv("FORGE_PLUGIN_HOST") == "1",
+		fcmServiceAccount: firstNonEmpty(*fcmServiceAccount, os.Getenv("OPCODE_FCM_SERVICE_ACCOUNT")),
+		pluginHost:        *pluginHost || os.Getenv("OPCODE_PLUGIN_HOST") == "1",
 	}, explicit)
 
 	if err := run(opts); err != nil {
-		log.Fatalf("forged: %v", err)
+		log.Fatalf("opcoded: %v", err)
 	}
 }
 
@@ -145,7 +145,7 @@ func run(opts options) error {
 	authCfg := auth.FromEnv()
 	if !authCfg.Required() {
 		// opencode only warns when the server is unsecured (cli/cmd/serve.ts:15);
-		// Forge keeps the warning on loopback but REFUSES to expose an
+		// Opcode42 keeps the warning on loopback but REFUSES to expose an
 		// unauthenticated daemon on a non-loopback interface (plan 13 §"Defaults":
 		// "0.0.0.0 bind requires a password; daemon refuses to start otherwise").
 		if err := authCfg.CheckBindExposure(opts.host); err != nil {
@@ -349,7 +349,7 @@ func builtinRegistry(todos *tool.TodoStore) *registry.Registry {
 // providerFactory builds a streaming client for a provider/model. It routes to
 // the Anthropic client for Anthropic-native providers (by id or catalog npm) and
 // the OpenAI-compatible client otherwise, resolving the base URL from the catalog
-// (or FORGE_PROVIDER_BASE_URL).
+// (or OPCODE_PROVIDER_BASE_URL).
 //
 // Credential resolution prefers a provider's OAuth access token over the static
 // API-key path, mirroring opencode's per-provider auth loader (xai.ts:575-660):
@@ -360,7 +360,7 @@ func builtinRegistry(todos *tool.TodoStore) *registry.Registry {
 // oauthSvc may be nil (OAuth disabled), in which case only the API-key path runs.
 func providerFactory(cat catalog.Catalog, oauthSvc credresolve.Accessor) engine.ProviderFactory {
 	return func(ctx context.Context, providerID, modelID string) (llm.Provider, error) {
-		baseURL := os.Getenv("FORGE_PROVIDER_BASE_URL")
+		baseURL := os.Getenv("OPCODE_PROVIDER_BASE_URL")
 		var apiKey, npm string
 		if prov, ok := cat[providerID]; ok {
 			if baseURL == "" {
@@ -370,13 +370,13 @@ func providerFactory(cat catalog.Catalog, oauthSvc credresolve.Accessor) engine.
 			npm = prov.NPM
 		}
 		if apiKey == "" {
-			apiKey = os.Getenv("FORGE_PROVIDER_API_KEY")
+			apiKey = os.Getenv("OPCODE_PROVIDER_API_KEY")
 		}
 		if baseURL == "" {
 			baseURL = builtinBaseURL(providerID)
 		}
 		if baseURL == "" {
-			return nil, fmt.Errorf("no base URL for provider %q (set FORGE_PROVIDER_BASE_URL)", providerID)
+			return nil, fmt.Errorf("no base URL for provider %q (set OPCODE_PROVIDER_BASE_URL)", providerID)
 		}
 
 		// Resolve the credential: OAuth access token first, else the static API
@@ -400,7 +400,7 @@ func providerFactory(cat catalog.Catalog, oauthSvc credresolve.Accessor) engine.
 			}
 			return anthropic.New(opts), nil
 		}
-		// OpenAI-compatible client (covers xAI, Forge's only OAuth provider today):
+		// OpenAI-compatible client (covers xAI, Opcode42's only OAuth provider today):
 		// APIKey is emitted as Authorization: Bearer, so an OAuth access token and
 		// a static api key take the same code path here.
 		return openai.New(openai.Options{BaseURL: baseURL, APIKey: cred.APIKey, Model: modelID}), nil
@@ -410,10 +410,10 @@ func providerFactory(cat catalog.Catalog, oauthSvc credresolve.Accessor) engine.
 // builtinBaseURL returns an OpenAI-compatible base URL for providers whose
 // models.dev catalog entry advertises no `api` field but that nonetheless expose
 // an OpenAI-compatible endpoint. opencode reaches these through provider-specific
-// AI-SDK packages (e.g. @ai-sdk/google) with the endpoint baked in; Forge's
+// AI-SDK packages (e.g. @ai-sdk/google) with the endpoint baked in; Opcode42's
 // OpenAI-compatible client needs the URL explicitly. The api key still comes from
 // the provider's advertised env vars (GEMINI_API_KEY / GOOGLE_*_API_KEY for
-// google), so only the base URL is supplied here. FORGE_PROVIDER_BASE_URL still
+// google), so only the base URL is supplied here. OPCODE_PROVIDER_BASE_URL still
 // takes precedence (it is resolved before this fallback).
 //
 // Reference: Gemini's OpenAI-compatibility layer lives at
@@ -450,7 +450,7 @@ func firstEnv(names ...string) string {
 
 // startMDNS advertises the service on the actually-bound port when mDNS is
 // enabled and the host is not loopback (server.ts:158-164). It publishes both
-// the opencode-compatible _http._tcp record and Forge's richer _opencode._tcp
+// the opencode-compatible _http._tcp record and Opcode42's richer _opencode._tcp
 // record (plan 13 §Discovery); authRequired sets the auth TXT key on the latter.
 // Returns nil when nothing was published.
 func startMDNS(opts options, ln net.Listener, authRequired bool) *mdns.Service {
@@ -476,7 +476,7 @@ func startMDNS(opts options, ln net.Listener, authRequired bool) *mdns.Service {
 // long-lived streams, then drain HTTP with a 10s deadline. SQLite is closed by
 // run's deferred db.Close.
 func shutdown(srv *http.Server, instances *instance.Manager, mdnsSvc *mdns.Service, oauthSvc *oauth.Service, cancelBase context.CancelFunc) error {
-	fmt.Fprintln(os.Stderr, "forged: shutting down")
+	fmt.Fprintln(os.Stderr, "opcoded: shutting down")
 	mdnsSvc.Shutdown()
 	instances.DisposeAll()
 	cancelBase()

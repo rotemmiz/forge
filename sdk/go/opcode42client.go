@@ -1,4 +1,4 @@
-package forgeclient
+package opcode42client
 
 import (
 	"bytes"
@@ -11,16 +11,16 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/rotemmiz/forge/sdk/go/gen"
+	"github.com/rotemmiz/opcode42/sdk/go/gen"
 )
 
-// ForgeClient is the Forge/opencode SDK: the generated REST client (API) plus
+// Opcode42Client is the Opcode42/opencode SDK: the generated REST client (API) plus
 // cross-cutting auth + directory-routing header injection, and a hand-written
 // SSE client (sse.go) and a hand-written WebSocket-PTY client (pty.go).
 //
-// It is wire-generic: point it at a Forge daemon or a real opencode daemon — the
-// contract is identical (plan 06 / plan 08 "opencode now, Forge-ready").
-type ForgeClient struct {
+// It is wire-generic: point it at a Opcode42 daemon or a real opencode daemon — the
+// contract is identical (plan 06 / plan 08 "opencode now, Opcode42-ready").
+type Opcode42Client struct {
 	// API is the generated typed REST client; use it for any endpoint.
 	API *gen.ClientWithResponses
 
@@ -31,7 +31,7 @@ type ForgeClient struct {
 	sse       *http.Client
 }
 
-// Options configures a ForgeClient.
+// Options configures a Opcode42Client.
 type Options struct {
 	// Directory is sent as x-opencode-directory (per-request routing). Optional.
 	Directory string
@@ -45,8 +45,8 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
-// New builds a ForgeClient for the daemon at baseURL.
-func New(baseURL string, opts Options) (*ForgeClient, error) {
+// New builds a Opcode42Client for the daemon at baseURL.
+func New(baseURL string, opts Options) (*Opcode42Client, error) {
 	auth := ""
 	switch {
 	case opts.AuthToken != "":
@@ -62,7 +62,7 @@ func New(baseURL string, opts Options) (*ForgeClient, error) {
 		rest = &http.Client{Timeout: 30 * time.Second}
 	}
 	sse := &http.Client{Transport: rest.Transport}
-	c := &ForgeClient{baseURL: trimURL(baseURL), directory: opts.Directory, auth: auth, rest: rest, sse: sse}
+	c := &Opcode42Client{baseURL: trimURL(baseURL), directory: opts.Directory, auth: auth, rest: rest, sse: sse}
 
 	api, err := gen.NewClientWithResponses(c.baseURL,
 		gen.WithHTTPClient(rest),
@@ -76,7 +76,7 @@ func New(baseURL string, opts Options) (*ForgeClient, error) {
 }
 
 // injectHeaders adds auth + directory routing to every generated request.
-func (c *ForgeClient) injectHeaders(_ context.Context, req *http.Request) error {
+func (c *Opcode42Client) injectHeaders(_ context.Context, req *http.Request) error {
 	if c.auth != "" {
 		req.Header.Set("Authorization", c.auth)
 	}
@@ -90,7 +90,7 @@ func (c *ForgeClient) injectHeaders(_ context.Context, req *http.Request) error 
 }
 
 // Health checks the daemon is reachable and authorized via GET /global/health.
-func (c *ForgeClient) Health(ctx context.Context) error {
+func (c *Opcode42Client) Health(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/global/health", nil)
 	if err != nil {
 		return err
@@ -115,7 +115,7 @@ func (c *ForgeClient) Health(ctx context.Context) error {
 // decodes the JSON response into dst. It is a pragmatic escape hatch for reads
 // whose generated typed response is an awkward union (e.g. message lists);
 // callers that want typed requests use API directly.
-func (c *ForgeClient) GetJSON(ctx context.Context, path string, dst any) error {
+func (c *Opcode42Client) GetJSON(ctx context.Context, path string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (c *ForgeClient) GetJSON(ctx context.Context, path string, dst any) error {
 // PostJSON performs an authed POST of a JSON body to a path and, if dst is
 // non-nil and the response carries a body, decodes the JSON response into it.
 // Empty/204 responses are tolerated.
-func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) error {
+func (c *Opcode42Client) PostJSON(ctx context.Context, path string, body, dst any) error {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -174,7 +174,7 @@ func (c *ForgeClient) PostJSON(ctx context.Context, path string, body, dst any) 
 
 // PatchJSON performs an authed PATCH of a JSON body to a path and, if dst is
 // non-nil and a body is returned, decodes the JSON response into it.
-func (c *ForgeClient) PatchJSON(ctx context.Context, path string, body, dst any) error {
+func (c *Opcode42Client) PatchJSON(ctx context.Context, path string, body, dst any) error {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -211,7 +211,7 @@ func (c *ForgeClient) PatchJSON(ctx context.Context, path string, body, dst any)
 
 // DeleteJSON performs an authed DELETE and decodes a JSON response body into dst
 // (some endpoints, e.g. /session/{id}/share, return the updated resource).
-func (c *ForgeClient) DeleteJSON(ctx context.Context, path string, dst any) error {
+func (c *Opcode42Client) DeleteJSON(ctx context.Context, path string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func (c *ForgeClient) DeleteJSON(ctx context.Context, path string, dst any) erro
 }
 
 // Delete performs an authed DELETE on a path. Non-2xx is an error.
-func (c *ForgeClient) Delete(ctx context.Context, path string) error {
+func (c *Opcode42Client) Delete(ctx context.Context, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
 	if err != nil {
 		return err
@@ -257,7 +257,7 @@ func (c *ForgeClient) Delete(ctx context.Context, path string) error {
 }
 
 // BaseURL returns the daemon base URL.
-func (c *ForgeClient) BaseURL() string { return c.baseURL }
+func (c *Opcode42Client) BaseURL() string { return c.baseURL }
 
 func trimURL(u string) string {
 	for len(u) > 0 && u[len(u)-1] == '/' {

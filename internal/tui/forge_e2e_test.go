@@ -1,11 +1,11 @@
 package tui
 
-// TUI <-> Forge dual-run parity (plan 08 U13).
+// TUI <-> Opcode42 dual-run parity (plan 08 U13).
 //
 // These tests drive the REAL TUI Model.Update loop against a REAL, in-process
-// Forge daemon (the production internal/server handler wired to the agent engine
+// Opcode42 daemon (the production internal/server handler wired to the agent engine
 // + a deterministic mock provider). They prove the dogfood client's core flows
-// work end-to-end against Forge — not opencode — over the actual HTTP+SSE wire:
+// work end-to-end against Opcode42 — not opencode — over the actual HTTP+SSE wire:
 //
 //   - health + global SSE subscribe (connectedMsg -> stream open -> listen)
 //   - session list bootstrap + history load
@@ -20,7 +20,7 @@ package tui
 //
 // This is the TUI side of the U13 parity gate: the conformance suite (plan 12)
 // already records the TUI's READ surface against opencode and dual-runs it vs
-// Forge; this exercises the TUI's own reduce/render against a live Forge daemon.
+// Opcode42; this exercises the TUI's own reduce/render against a live Opcode42 daemon.
 
 import (
 	"context"
@@ -31,34 +31,34 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/rotemmiz/forge/internal/auth"
-	"github.com/rotemmiz/forge/internal/bus"
-	"github.com/rotemmiz/forge/internal/engine/catalog"
-	"github.com/rotemmiz/forge/internal/engine/enginetest"
-	"github.com/rotemmiz/forge/internal/engine/llm"
-	"github.com/rotemmiz/forge/internal/engine/message"
-	"github.com/rotemmiz/forge/internal/engine/permission"
-	"github.com/rotemmiz/forge/internal/engine/registry"
-	"github.com/rotemmiz/forge/internal/engine/tool"
-	"github.com/rotemmiz/forge/internal/instance"
-	"github.com/rotemmiz/forge/internal/server"
-	"github.com/rotemmiz/forge/internal/session"
-	"github.com/rotemmiz/forge/internal/storage"
-	"github.com/rotemmiz/forge/internal/worktree"
+	"github.com/rotemmiz/opcode42/internal/auth"
+	"github.com/rotemmiz/opcode42/internal/bus"
+	"github.com/rotemmiz/opcode42/internal/engine/catalog"
+	"github.com/rotemmiz/opcode42/internal/engine/enginetest"
+	"github.com/rotemmiz/opcode42/internal/engine/llm"
+	"github.com/rotemmiz/opcode42/internal/engine/message"
+	"github.com/rotemmiz/opcode42/internal/engine/permission"
+	"github.com/rotemmiz/opcode42/internal/engine/registry"
+	"github.com/rotemmiz/opcode42/internal/engine/tool"
+	"github.com/rotemmiz/opcode42/internal/instance"
+	"github.com/rotemmiz/opcode42/internal/server"
+	"github.com/rotemmiz/opcode42/internal/session"
+	"github.com/rotemmiz/opcode42/internal/storage"
+	"github.com/rotemmiz/opcode42/internal/worktree"
 )
 
-// forgeRig is a real Forge daemon (engine + mock provider) fronted by httptest,
+// opcode42Rig is a real Opcode42 daemon (engine + mock provider) fronted by httptest,
 // plus the per-directory instance so a test can reach its permission manager.
-type forgeRig struct {
+type opcode42Rig struct {
 	srv  *httptest.Server
 	dir  string
 	inst *instance.Context
 	mock *enginetest.MockProvider
 }
 
-// newForgeRig boots a real in-process Forge daemon wired to the agent engine and
+// newOpcode42Rig boots a real in-process Opcode42 daemon wired to the agent engine and
 // a deterministic mock provider replaying the given scripts.
-func newForgeRig(t *testing.T, scripts ...[]llm.Event) *forgeRig {
+func newOpcode42Rig(t *testing.T, scripts ...[]llm.Event) *opcode42Rig {
 	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
@@ -93,16 +93,16 @@ func newForgeRig(t *testing.T, scripts ...[]llm.Event) *forgeRig {
 	// worktree.Resolve (symlink-canonicalised on macOS: /var -> /private/var).
 	// Resolve here too so r.inst is the SAME per-directory instance the TUI's
 	// requests (x-opencode-directory: dir) land on.
-	return &forgeRig{srv: srv, dir: dir, inst: instances.Get(worktree.Resolve(dir)), mock: mock}
+	return &opcode42Rig{srv: srv, dir: dir, inst: instances.Get(worktree.Resolve(dir)), mock: mock}
 }
 
 // newModel builds a real TUI Model pointed at the rig's daemon, with the prompt
 // model pre-resolved to the fixture catalog's openai/gpt-4o so submit() proceeds.
-func (r *forgeRig) newModel() Model {
+func (r *opcode42Rig) newModel() Model {
 	m := New(Config{
 		URL: r.srv.URL, Directory: r.dir,
 		Provider: "openai", Model: "gpt-4o",
-		Theme: "forge-dark", // deterministic palette for capture
+		Theme: "opcode42-dark", // deterministic palette for capture
 	})
 	m.width, m.height = 120, 40 // give the View() a real layout
 	return m
@@ -183,11 +183,11 @@ func (d *driver) step(msg tea.Msg) (Model, tea.Cmd) {
 	return next.(Model), cmd
 }
 
-// TestForgeParity_ConnectAndStream proves the TUI connects to a real Forge daemon,
+// TestOpcode42Parity_ConnectAndStream proves the TUI connects to a real Opcode42 daemon,
 // opens the global SSE stream, and bootstraps — the connection lifecycle the
 // dogfood client depends on, exercised over the wire (not via injected msgs).
-func TestForgeParity_ConnectAndStream(t *testing.T) {
-	r := newForgeRig(t)
+func TestOpcode42Parity_ConnectAndStream(t *testing.T) {
+	r := newOpcode42Rig(t)
 	d := newDriver(t, r.newModel())
 
 	d.pump(func(m Model) bool { return m.conn == Connected && m.stream != nil })
@@ -196,20 +196,20 @@ func TestForgeParity_ConnectAndStream(t *testing.T) {
 		t.Fatalf("conn = %v, want Connected", d.m.conn)
 	}
 	if d.m.stream == nil {
-		t.Fatal("global SSE stream never opened against Forge")
+		t.Fatal("global SSE stream never opened against Opcode42")
 	}
 	d.m.stream.Close()
 }
 
-// TestForgeParity_PromptStreamsParts is the hero flow: against a real Forge
+// TestOpcode42Parity_PromptStreamsParts is the hero flow: against a real Opcode42
 // daemon, create a session, submit a prompt, and assert the streamed
 // message/part SSE lands in the TUI store and renders. No real LLM — the mock
 // provider scripts the assistant turn.
-func TestForgeParity_PromptStreamsParts(t *testing.T) {
+func TestOpcode42Parity_PromptStreamsParts(t *testing.T) {
 	script := enginetest.NewScript().StepStart().
-		Text("t1", "Hello", ", ", "Forge").
+		Text("t1", "Hello", ", ", "Opcode42").
 		StepFinish("stop", llm.TokenUsage{Input: 4, Output: 3}).Finish().Events()
-	r := newForgeRig(t, script)
+	r := newOpcode42Rig(t, script)
 	d := newDriver(t, r.newModel())
 
 	// Wait until connected + streaming before prompting.
@@ -217,32 +217,32 @@ func TestForgeParity_PromptStreamsParts(t *testing.T) {
 
 	// Type a prompt and submit — submit() creates a session then prompts, both
 	// over the real wire.
-	d.m.input.SetValue("hi forge")
+	d.m.input.SetValue("hi opcode42")
 	d.inject(key("enter"))
 
 	// The assistant text streams back as message.part deltas/updates over
 	// /global/event. Wait until the rendered session contains the scripted reply.
 	d.pump(func(m Model) bool {
-		return m.cfg.SessionID != "" && assistantTextContains(m, "Hello, Forge")
+		return m.cfg.SessionID != "" && assistantTextContains(m, "Hello, Opcode42")
 	})
 
-	if got := assistantText(d.m); got != "Hello, Forge" {
-		t.Fatalf("streamed assistant text = %q, want %q", got, "Hello, Forge")
+	if got := assistantText(d.m); got != "Hello, Opcode42" {
+		t.Fatalf("streamed assistant text = %q, want %q", got, "Hello, Opcode42")
 	}
 	// The session view must render the streamed reply (markdown may reflow, so
 	// match a distinctive word on the ANSI-stripped frame).
-	if !strings.Contains(stripANSI(d.m.View()), "Forge") {
+	if !strings.Contains(stripANSI(d.m.View()), "Opcode42") {
 		t.Fatalf("session view missing streamed assistant text")
 	}
 	d.m.stream.Close()
 }
 
-// TestForgeParity_PermissionRoundTrip proves the blocking permission overlay works
-// end-to-end against Forge: a real permission.asked (published by the daemon's
+// TestOpcode42Parity_PermissionRoundTrip proves the blocking permission overlay works
+// end-to-end against Opcode42: a real permission.asked (published by the daemon's
 // permission manager, the exact path the engine uses) surfaces in the TUI; the
 // user allows it; the TUI POSTs the reply; the daemon's Ask() unblocks.
-func TestForgeParity_PermissionRoundTrip(t *testing.T) {
-	r := newForgeRig(t)
+func TestOpcode42Parity_PermissionRoundTrip(t *testing.T) {
+	r := newOpcode42Rig(t)
 	d := newDriver(t, r.newModel())
 	d.pump(func(m Model) bool { return m.conn == Connected && m.stream != nil })
 
@@ -288,11 +288,11 @@ func TestForgeParity_PermissionRoundTrip(t *testing.T) {
 	d.m.stream.Close()
 }
 
-// TestForgeParity_Abort proves the abort flow reaches the real daemon: with a
+// TestOpcode42Parity_Abort proves the abort flow reaches the real daemon: with a
 // session open, POST /session/{id}/abort returns cleanly and the TUI reports the
 // interrupt.
-func TestForgeParity_Abort(t *testing.T) {
-	r := newForgeRig(t)
+func TestOpcode42Parity_Abort(t *testing.T) {
+	r := newOpcode42Rig(t)
 	d := newDriver(t, r.newModel())
 	d.pump(func(m Model) bool { return m.conn == Connected && m.stream != nil })
 
@@ -300,7 +300,7 @@ func TestForgeParity_Abort(t *testing.T) {
 	d.run(createSessionCmd(d.m.ctx, d.m.client, ""))
 	d.pump(func(m Model) bool { return m.cfg.SessionID != "" })
 
-	// Abort the (idle) session — opencode/Forge both 200 a no-op abort.
+	// Abort the (idle) session — opencode/Opcode42 both 200 a no-op abort.
 	d.run(abortSessionCmd(d.m.ctx, d.m.client, d.m.cfg.SessionID))
 	d.pump(func(m Model) bool { return m.status == "interrupted" })
 

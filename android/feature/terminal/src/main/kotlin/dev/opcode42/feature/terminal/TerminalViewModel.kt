@@ -8,7 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.opcode42.core.sdk.Opcode42Client
+import dev.opcode42.core.data.TerminalRepository
 import dev.opcode42.core.sdk.PtyClient
 import dev.opcode42.core.sdk.TerminalEmulator
 import dev.opcode42.feature.connections.ServerConnectionManager
@@ -20,7 +20,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class TerminalViewModel @Inject constructor(
-    private val client: Opcode42Client,
+    private val terminalRepo: TerminalRepository,
     private val connectionManager: ServerConnectionManager,
 ) : ViewModel() {
 
@@ -58,7 +58,7 @@ class TerminalViewModel @Inject constructor(
         connectJob = viewModelScope.launch {
             try {
                 // 1. Create the PTY session once; reuse its id across reconnects.
-                val id = ptyId ?: client.createPty(directory).id.also { ptyId = it }
+                val id = ptyId ?: terminalRepo.createPty(directory).getOrThrow().id.also { ptyId = it }
 
                 // 2. Build the auth token: base64(user:pass) or base64(:token).
                 val conn = connectionManager.active
@@ -66,7 +66,7 @@ class TerminalViewModel @Inject constructor(
                 val authToken = buildAuthToken(conn.http.username, conn.http.password)
 
                 // 3. Connect the WebSocket, resuming from the last cursor if any.
-                val pc = client.connectPty(id, authToken, lastCursor)
+                val pc = terminalRepo.connectPty(id, authToken, lastCursor)
                 ptyClient = pc
                 _connected.value = true
 
@@ -120,7 +120,7 @@ class TerminalViewModel @Inject constructor(
         if (size == lastSize) return // IME/scroll re-layouts fire identical sizes; skip
         lastSize = size
         viewModelScope.launch {
-            runCatching { client.resizePty(id, rows, cols) }
+            terminalRepo.resizePty(id, rows, cols)
                 .onFailure { Log.w("TerminalVM", "resize failed", it) }
         }
     }

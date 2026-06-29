@@ -6,16 +6,17 @@ set -euo pipefail
 fail=0
 
 # --- Legitimately-remaining "forge", by design -----------------------------
-# (1) The rename plan itself documents both names (before -> after tables).
-PLAN='plans/14-rename-opcode42.md'
+# (0) Meta-files that necessarily name both the old and new brand: the rename
+#     plan (before -> after tables) and this gate script itself.
+META=(':!plans/14-rename-opcode42.md' ':!scripts/check-rename.sh')
 # (2) decision-3 SEAM: the GitHub repo is intentionally NOT renamed yet, so the
 #     clone URL / container registry / goreleaser release name stay "forge" until
 #     `gh repo rename` (plans/14 §3). These are the ONLY allowed "forge" lines.
 # (3) English word "forget" / "fire-and-forget" contains the substring "forge".
 SEAM='github\.com/rotemmiz/forge|ghcr\.io/rotemmiz/forge|^[^:]*:[0-9]+:[[:space:]]*name: forge|forget'
 
-# --- (1) NEGATIVE: no stray "forge" outside the plan doc / seam / "forget" ---
-stray="$(git grep -in -e forge -- . ":!$PLAN" | grep -viE "$SEAM" || true)"
+# --- (1) NEGATIVE: no stray "forge" outside meta-files / seam / "forget" -----
+stray="$(git grep -in -e forge -- . "${META[@]}" | grep -viE "$SEAM" || true)"
 if [[ -n "$stray" ]]; then
   echo "X stray 'forge' remains:"; echo "$stray" | sed 's/^/    /'
   echo "  -> rename it, or (if a new repo-seam line) extend SEAM in this script."; fail=1

@@ -3,20 +3,13 @@ package dev.opcode42.feature.sessions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.opcode42.core.model.AppEvent
+import dev.opcode42.core.data.SessionRepository
 import dev.opcode42.core.model.PermissionRequest
 import dev.opcode42.core.model.QuestionRequest
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.network.ActiveConnectionProvider
-import dev.opcode42.core.sdk.Opcode42Client
-import dev.opcode42.core.store.AppState
-import dev.opcode42.core.store.AppStore
 import dev.opcode42.feature.sessions.ui.isSessionBusy
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -72,8 +65,6 @@ internal data class SessionInputs(
     val permissions: Map<String, List<PermissionRequest>>,
     val questions: Map<String, List<QuestionRequest>>,
 )
-
-internal fun AppState.toSessionInputs() = SessionInputs(sessions, sessionStatus, permissions, questions)
 
 /**
  * Pure projection from the store slice to the list UI state. Kept side-effect-free and
@@ -147,8 +138,7 @@ internal fun projectSessionList(
 
 @HiltViewModel
 class SessionListViewModel @Inject constructor(
-    private val client: Opcode42Client,
-    private val store: AppStore,
+    private val sessionRepo: SessionRepository,
     private val connectionProvider: ActiveConnectionProvider,
 ) : ViewModel() {
 
@@ -163,7 +153,9 @@ class SessionListViewModel @Inject constructor(
             // Only re-project when a field the list actually reads changes — not on every
             // message/part streaming delta, which would otherwise re-sort + re-group + do
             // per-session LocalDate math over the whole global list on the main thread.
-            store.state.map { it.toSessionInputs() }.distinctUntilChanged(),
+            sessionRepo.snapshot
+                .map { SessionInputs(it.sessions, it.status, it.permissions, it.questions) }
+                .distinctUntilChanged(),
             _showArchived,
             _query,
             _filter,
@@ -199,48 +191,19 @@ class SessionListViewModel @Inject constructor(
     }
 
     /**
-     * Aggregate sessions across **every project/directory** the daemon knows, so the list is
-     * a global view that needs no configured working folder. Enumerate `GET /project`, fan out
-     * `listSessions(dir)` per worktree + sandbox in parallel, plus one no-directory call (covers
-     * the daemon's default/CWD project and the Opcode42 "all sessions" case), then dedupe by id.
-     * Every call is wrapped so one unreachable directory never blanks the whole list.
+     * Refresh the global session list. The cross-project fan-out (enumerate projects, query each
+     * worktree + sandbox in parallel, dedupe) lives in [SessionRepository.refreshAll]; a failure
+     * is silent here because sessions also arrive via SSE once connected.
      */
     fun loadSessions() {
-        viewModelScope.launch {
-            try {
-                val projects = runCatching { client.listProjects() }.getOrDefault(emptyList())
-                val dirs = projects
-                    .flatMap { listOf(it.worktree) + it.sandboxes }
-                    .filterNotNull()
-                    .filter { it != "/" } // root worktree of the synthetic "global" project
-                    .toSet()
-                val sessions = coroutineScope {
-                    val perDir = dirs.map { dir ->
-                        async { runCatching { client.listSessions(dir) }.getOrDefault(emptyList()) }
-                    }
-                    val global = async { runCatching { client.listSessions(null) }.getOrDefault(emptyList()) }
-                    perDir.awaitAll().flatten() + global.await()
-                }
-                sessions.distinctBy { it.id }.forEach { session ->
-                    store.dispatch(AppEvent.SessionUpdated(session))
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Sessions will load from SSE events once connected
-            }
-        }
+        viewModelScope.launch { sessionRepo.refreshAll() }
     }
 
     fun forkSession(sessionId: String, onForked: (Session) -> Unit) {
         viewModelScope.launch {
-            try {
-                val newSession = client.forkSession(sessionId)
-                store.dispatch(AppEvent.SessionUpdated(newSession))
-                onForked(newSession)
-            } catch (e: Exception) {
-                android.util.Log.e("SessionListVM", "forkSession failed", e)
-            }
+            sessionRepo.fork(sessionId)
+                .onSuccess { onForked(it) }
+                .onFailure { android.util.Log.e("SessionListVM", "forkSession failed", it) }
         }
     }
 
@@ -249,11 +212,8 @@ class SessionListViewModel @Inject constructor(
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.renameSession(sessionId, trimmed)))
-            } catch (e: Exception) {
-                android.util.Log.e("SessionListVM", "renameSession failed", e)
-            }
+            sessionRepo.rename(sessionId, trimmed)
+                .onFailure { android.util.Log.e("SessionListVM", "renameSession failed", it) }
         }
     }
 
@@ -264,22 +224,15 @@ class SessionListViewModel @Inject constructor(
      */
     fun archiveSession(sessionId: String) {
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.archiveSession(sessionId)))
-            } catch (e: Exception) {
-                android.util.Log.e("SessionListVM", "archiveSession failed", e)
-            }
+            sessionRepo.archive(sessionId)
+                .onFailure { android.util.Log.e("SessionListVM", "archiveSession failed", it) }
         }
     }
 
     fun deleteSession(sessionId: String) {
         viewModelScope.launch {
-            try {
-                client.deleteSession(sessionId)
-                store.dispatch(AppEvent.SessionRemoved(sessionId))
-            } catch (e: Exception) {
-                android.util.Log.e("SessionListVM", "deleteSession failed", e)
-            }
+            sessionRepo.delete(sessionId)
+                .onFailure { android.util.Log.e("SessionListVM", "deleteSession failed", it) }
         }
     }
 
@@ -290,45 +243,24 @@ class SessionListViewModel @Inject constructor(
 
     /** Approve or deny a session's pending permission from the menu. */
     fun replyPermission(requestId: String, allow: Boolean) {
-        viewModelScope.launch {
-            try {
-                client.replyPermission(requestId, allow)
-                store.dispatch(AppEvent.PermissionReplied(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.replyPermission(requestId, allow) }
     }
 
     /** Answer a session's pending question from the menu. */
     fun replyQuestion(requestId: String, answer: String) {
-        viewModelScope.launch {
-            try {
-                client.replyQuestion(requestId, answer)
-                store.dispatch(AppEvent.QuestionReplied(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.replyQuestion(requestId, answer) }
     }
 
     /** Skip a session's pending question from the menu. */
     fun rejectQuestion(requestId: String) {
-        viewModelScope.launch {
-            try {
-                client.rejectQuestion(requestId)
-                store.dispatch(AppEvent.QuestionRejected(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.rejectQuestion(requestId) }
     }
 
     fun createSession(directory: String? = null, onCreated: (Session) -> Unit) {
         viewModelScope.launch {
             _isCreating.value = true
-            try {
-                val session = client.createSession(directory)
-                store.dispatch(AppEvent.SessionUpdated(session))
-                onCreated(session)
-            } catch (_: Exception) {
-            } finally {
-                _isCreating.value = false
-            }
+            sessionRepo.create(directory).onSuccess { onCreated(it) }
+            _isCreating.value = false
         }
     }
 }

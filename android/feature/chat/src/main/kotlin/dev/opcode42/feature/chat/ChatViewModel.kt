@@ -4,12 +4,11 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.opcode42.core.data.ChatRepository
+import dev.opcode42.core.data.SessionRepository
 import dev.opcode42.core.model.*
-import dev.opcode42.core.network.SseManager
-import dev.opcode42.core.sdk.Opcode42Client
-import dev.opcode42.core.store.AppStore
-import dev.opcode42.core.store.OptimisticMessage
 import dev.opcode42.core.store.ConnectionState
+import dev.opcode42.core.store.OptimisticMessage
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -48,33 +47,28 @@ data class ChatUiState(
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val client: Opcode42Client,
-    private val store: AppStore,
-    private val sseManager: SseManager,
+    private val chatRepo: ChatRepository,
+    private val sessionRepo: SessionRepository,
 ) : ViewModel() {
 
     private val sessionId: String = checkNotNull(savedStateHandle["sessionId"])
 
-    // C4 — tracks in-flight diff fetches to prevent duplicate requests and infinite retry
-    private val _diffInFlight = mutableSetOf<String>()
-
-    val uiState: StateFlow<ChatUiState> = store.state
-        .map { appState ->
-            val session = appState.sessions.firstOrNull { it.id == sessionId }
-            val messages = appState.messages[sessionId] ?: emptyList()
+    val uiState: StateFlow<ChatUiState> = chatRepo.observe(sessionId)
+        .map { snap ->
+            val messages = snap.messages
             // Status-strip context comes from the most recent assistant turn that
             // carries a model/agent (the live "what's running" state).
             val lastModelled = messages.lastOrNull { it.role == "assistant" && it.modelID != null }
             ChatUiState(
-                session = session,
+                session = snap.session,
                 messages = messages,
-                parts = appState.parts,
-                diffs = appState.diffs,
-                optimisticMessages = appState.optimisticMessages[sessionId] ?: emptyList(),
-                pendingPermissions = appState.permissions[sessionId] ?: emptyList(),
-                pendingQuestions = appState.questions[sessionId] ?: emptyList(),
-                sessionStatus = appState.sessionStatus[sessionId] ?: "idle",
-                todos = extractTodos(messages, appState.parts),
+                parts = snap.parts,
+                diffs = snap.diffs,
+                optimisticMessages = snap.optimistic,
+                pendingPermissions = snap.permissions,
+                pendingQuestions = snap.questions,
+                sessionStatus = snap.status,
+                todos = extractTodos(messages, snap.parts),
                 agentMode = lastModelled?.mode ?: lastModelled?.agent
                     ?: messages.lastOrNull { it.mode != null }?.mode
                     ?: messages.lastOrNull { it.agent != null }?.agent,
@@ -119,58 +113,51 @@ class ChatViewModel @Inject constructor(
 
     init {
         loadMessages()
-        // Load slash commands once the directory is known.
+        // Load slash commands / providers / agents once the directory is known.
         viewModelScope.launch {
             val dir = uiState.first { it.session?.directory != null }.session?.directory
-            try {
-                _commands.value = client.listCommands(dir)
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "listCommands failed", e)
-            }
-            try {
-                val resp = client.listProviders(dir)
-                // Only offer providers the daemon is actually authed against, so a picked
-                // model can't fail the prompt. Fall back to all if `connected` is unreported.
-                val connected = resp.connected.toSet()
-                _providers.value =
-                    if (connected.isEmpty()) resp.all else resp.all.filter { it.id in connected }
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "listProviders failed", e)
-            }
-            try {
-                _agents.value = client.listAgents(dir).filter { it.isPrimary }
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "listAgents failed", e)
-            }
+            chatRepo.listCommands(dir)
+                .onSuccess { _commands.value = it }
+                .onFailure { android.util.Log.w("ChatVM", "listCommands failed", it) }
+            chatRepo.listProviders(dir)
+                .onSuccess { resp ->
+                    // Only offer providers the daemon is actually authed against, so a picked
+                    // model can't fail the prompt. Fall back to all if `connected` is unreported.
+                    val connected = resp.connected.toSet()
+                    _providers.value =
+                        if (connected.isEmpty()) resp.all else resp.all.filter { it.id in connected }
+                }
+                .onFailure { android.util.Log.w("ChatVM", "listProviders failed", it) }
+            chatRepo.listAgents(dir)
+                .onSuccess { agents -> _agents.value = agents.filter { it.isPrimary } }
+                .onFailure { android.util.Log.w("ChatVM", "listAgents failed", it) }
         }
         // Subscribe to per-directory SSE exactly once, when the session's directory is known
         viewModelScope.launch {
             val dir = uiState.first { it.session?.directory != null }.session?.directory
-            if (dir != null) sseManager.subscribeDirectory(dir)
+            if (dir != null) chatRepo.subscribeDirectory(dir)
         }
         // Reload messages after a reconnection (GlobalDisposed wipes state)
         viewModelScope.launch {
-            store.state
-                .map { it.connectionState }
+            chatRepo.connectionState
                 .distinctUntilChanged()
                 .drop(1) // skip initial state; init already called loadMessages()
                 .filter { it is ConnectionState.Connected }
                 .collect { loadMessages() }
         }
-        // C4 — Watch for new PatchParts and load diff content for each one not yet
-        // fetched. Parts are keyed by messageID, so scan this session's messages
-        // (live SSE parts supersede REST-loaded parts).
+        // C4 — Watch for new PatchParts and load diff content for each one not yet fetched.
+        // Parts are keyed by messageID (live SSE parts supersede REST-loaded parts). The repo's
+        // loadDiff is idempotent and fire-and-forget; we still pre-filter already-loaded diffs
+        // (from the snapshot) to avoid spawning no-op coroutines on every streaming delta.
         viewModelScope.launch {
-            store.state.collect { appState ->
-                val dir = appState.sessions.firstOrNull { it.id == sessionId }?.directory ?: return@collect
-                val msgs = appState.messages[sessionId] ?: return@collect
-                msgs.forEach { msg ->
-                    val parts = appState.parts[msg.id] ?: msg.parts
+            chatRepo.observe(sessionId).collect { snap ->
+                val dir = snap.session?.directory ?: return@collect
+                snap.messages.forEach { msg ->
+                    val parts = snap.parts[msg.id] ?: msg.parts
                     parts.filterIsInstance<PatchPart>()
-                        .filter { it.messageID !in appState.diffs && it.messageID !in _diffInFlight }
+                        .filter { it.messageID !in snap.diffs }
                         .forEach { patch ->
-                            _diffInFlight.add(patch.messageID)
-                            loadDiff(patch.messageID, dir)
+                            viewModelScope.launch { chatRepo.loadDiff(sessionId, patch.messageID, dir) }
                         }
                 }
             }
@@ -179,93 +166,46 @@ class ChatViewModel @Inject constructor(
 
     private fun loadMessages() {
         viewModelScope.launch {
-            try {
-                val messages = client.getMessages(sessionId, directory)
-                android.util.Log.d("ChatVM", "loadMessages: got ${messages.size} messages for $sessionId")
-                messages.forEach { msg ->
-                    android.util.Log.d("ChatVM", "  dispatch msg ${msg.id} role=${msg.role} parts=${msg.parts.size}")
-                    store.dispatch(AppEvent.MessageUpdated(msg))
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ChatVM", "loadMessages failed", e)
-            }
-        }
-    }
-
-    /** C4 — Fetch unified diff for a message and store in AppState */
-    private fun loadDiff(messageId: String, directory: String) {
-        viewModelScope.launch {
-            try {
-                val diffs = client.getSessionDiff(sessionId, messageId, directory)
-                store.dispatch(AppEvent.SessionDiffLoaded(messageId, diffs))
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "loadDiff failed for $messageId", e)
-                // Store empty list to prevent infinite retry on persistent failures
-                store.dispatch(AppEvent.SessionDiffLoaded(messageId, emptyList()))
-            } finally {
-                _diffInFlight.remove(messageId)
-            }
+            chatRepo.loadMessages(sessionId, directory)
+                .onFailure { android.util.Log.e("ChatVM", "loadMessages failed", it) }
         }
     }
 
     /** A7/C5 — Optimistic prompt submit with optional file attachments */
     fun sendPrompt(text: String, attachments: List<FilePartInput> = emptyList()) {
         viewModelScope.launch {
-            val optimisticId = if (text.isNotBlank()) store.addOptimistic(sessionId, text) else null
-            try {
-                client.sendPrompt(
-                    sessionId, text, directory, attachments,
-                    model = _selectedModel.value,
-                    agent = _selectedAgent.value,
-                )
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "sendPrompt failed", e)
-                optimisticId?.let { store.removeOptimistic(sessionId, it) }
-            }
+            chatRepo.send(sessionId, text, directory, attachments, _selectedModel.value, _selectedAgent.value)
+                .onFailure { android.util.Log.w("ChatVM", "sendPrompt failed", it) }
         }
     }
 
     /** @-mention picker — fuzzy file search in the session directory. */
     suspend fun searchFiles(query: String): List<String> =
-        try {
-            client.findFiles(query, directory)
-        } catch (e: Exception) {
-            android.util.Log.w("ChatVM", "findFiles failed", e)
-            emptyList()
-        }
+        chatRepo.searchFiles(query, directory).getOrDefault(emptyList())
 
     /** Slash palette — run a command by name with the trailing arguments. */
     fun runCommand(name: String, arguments: String) {
         viewModelScope.launch {
-            try {
-                client.runCommand(sessionId, name, arguments, directory)
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "runCommand failed", e)
-            }
+            chatRepo.runCommand(sessionId, name, arguments, directory)
+                .onFailure { android.util.Log.w("ChatVM", "runCommand failed", it) }
         }
     }
 
     /** Overflow → Fork: branch this session; [onForked] receives the new session id. */
     fun forkSession(onForked: (String) -> Unit) {
         viewModelScope.launch {
-            try {
-                val forked = client.forkSession(sessionId)
-                onForked(forked.id)
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "forkSession failed", e)
-            }
+            sessionRepo.fork(sessionId)
+                .onSuccess { onForked(it.id) }
+                .onFailure { android.util.Log.w("ChatVM", "forkSession failed", it) }
         }
     }
 
     /** Overflow → Delete: remove this session; [onDeleted] runs on success (navigate back). */
     fun deleteSession(onDeleted: () -> Unit) {
         viewModelScope.launch {
-            try {
-                client.deleteSession(sessionId)
-                onDeleted()
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "deleteSession failed", e)
-            }
+            sessionRepo.delete(sessionId)
+                .onSuccess { onDeleted() }
+                .onFailure { android.util.Log.w("ChatVM", "deleteSession failed", it) }
         }
     }
 
@@ -282,11 +222,8 @@ class ChatViewModel @Inject constructor(
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.renameSession(sessionId, trimmed, directory)))
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "renameSession failed", e)
-            }
+            sessionRepo.rename(sessionId, trimmed, directory)
+                .onFailure { android.util.Log.w("ChatVM", "renameSession failed", it) }
         }
     }
 
@@ -297,12 +234,9 @@ class ChatViewModel @Inject constructor(
      */
     fun archiveSession(onArchived: () -> Unit) {
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.archiveSession(sessionId, directory = directory)))
-                onArchived()
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "archiveSession failed", e)
-            }
+            sessionRepo.archive(sessionId, directory)
+                .onSuccess { onArchived() }
+                .onFailure { android.util.Log.w("ChatVM", "archiveSession failed", it) }
         }
     }
 
@@ -313,74 +247,47 @@ class ChatViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            try {
-                client.summarizeSession(sessionId, model, directory)
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "summarize failed", e)
-            }
+            sessionRepo.summarize(sessionId, model, directory)
+                .onFailure { android.util.Log.w("ChatVM", "summarize failed", it) }
         }
     }
 
     /** Overflow → Share: publish a link; the returned session (with share.url) updates the store. */
     fun shareSession() {
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.shareSession(sessionId, directory)))
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "shareSession failed", e)
-            }
+            sessionRepo.share(sessionId, directory)
+                .onFailure { android.util.Log.w("ChatVM", "shareSession failed", it) }
         }
     }
 
     /** Revoke the shared link; the returned session updates the store. */
     fun unshareSession() {
         viewModelScope.launch {
-            try {
-                store.dispatch(AppEvent.SessionUpdated(client.unshareSession(sessionId, directory)))
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "unshareSession failed", e)
-            }
+            sessionRepo.unshare(sessionId, directory)
+                .onFailure { android.util.Log.w("ChatVM", "unshareSession failed", it) }
         }
     }
 
     /** Stop a running agent turn (composer stop button, shown while the session is busy). */
     fun abort() {
         viewModelScope.launch {
-            try {
-                client.abortSession(sessionId, directory)
-            } catch (e: Exception) {
-                android.util.Log.w("ChatVM", "abortSession failed", e)
-            }
+            sessionRepo.abort(sessionId, directory)
+                .onFailure { android.util.Log.w("ChatVM", "abortSession failed", it) }
         }
     }
 
     /** A8 — Permission reply */
     fun replyPermission(requestId: String, allow: Boolean) {
-        viewModelScope.launch {
-            try {
-                client.replyPermission(requestId, allow)
-                store.dispatch(AppEvent.PermissionReplied(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.replyPermission(requestId, allow) }
     }
 
     /** A8 — Question reply */
     fun replyQuestion(requestId: String, answer: String) {
-        viewModelScope.launch {
-            try {
-                client.replyQuestion(requestId, answer)
-                store.dispatch(AppEvent.QuestionReplied(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.replyQuestion(requestId, answer) }
     }
 
     fun rejectQuestion(requestId: String) {
-        viewModelScope.launch {
-            try {
-                client.rejectQuestion(requestId)
-                store.dispatch(AppEvent.QuestionRejected(requestId))
-            } catch (_: Exception) { }
-        }
+        viewModelScope.launch { sessionRepo.rejectQuestion(requestId) }
     }
 }
 

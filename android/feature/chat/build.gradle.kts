@@ -21,8 +21,7 @@ android {
 dependencies {
     api(project(":core:model"))
     api(project(":core:store"))
-    implementation(project(":core:sdk"))
-    implementation(project(":core:network"))
+    implementation(project(":core:data"))
     implementation(project(":feature:connections"))
     implementation(libs.activity.compose)
     implementation(libs.android.lifecycle.viewmodel.compose)

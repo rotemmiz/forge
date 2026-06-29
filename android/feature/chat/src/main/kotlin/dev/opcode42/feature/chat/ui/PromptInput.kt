@@ -1,5 +1,7 @@
 package dev.opcode42.feature.chat.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.util.Base64
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import dev.opcode42.core.model.FilePartInput
 import dev.opcode42.feature.chat.commands.PaletteEntry
 import dev.opcode42.feature.chat.commands.filterByQuery
@@ -58,6 +62,10 @@ private data class PendingAttachment(val part: FilePartInput, val name: String)
 
 // Trailing @-mention token at the caret end: "see @src/ht" → "src/ht".
 private val MentionRegex = Regex("""(?:^|\s)@(\S*)$""")
+
+/** Appends dictated [spoken] text to whatever was in the field ([base]) when dictation began. */
+internal fun mergeTranscript(base: String, spoken: String): String =
+    if (base.isBlank()) spoken else "${base.trimEnd()} $spoken"
 
 /**
  * Sticky bottom prompt input (C5) with `/` command palette and `@` file-mention
@@ -80,6 +88,9 @@ fun PromptInput(
 
     var text by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
+    // Field contents at the moment dictation began; spoken text is appended to it
+    // so partial/final transcripts replace each other cleanly instead of stacking.
+    var baseText by remember { mutableStateOf("") }
 
     // `/cmd` is active only while the text is a single leading slash token.
     val slashQuery: String? = remember(text) {
@@ -130,6 +141,32 @@ fun PromptInput(
                 )
             }
         }
+    }
+
+    // Speech-to-text: partial + final transcripts both replace the spoken tail of
+    // the field, anchored to `baseText` captured when listening started.
+    val voice = rememberVoiceInput(
+        onPartial = { spoken -> text = mergeTranscript(baseText, spoken) },
+        onFinal = { spoken -> text = mergeTranscript(baseText, spoken) },
+    )
+    val audioPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            baseText = text
+            voice.start()
+        }
+    }
+    fun toggleVoice() {
+        if (voice.isListening) {
+            voice.stop()
+            return
+        }
+        baseText = text
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) voice.start() else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     Column(
@@ -220,6 +257,27 @@ fun PromptInput(
                 },
             )
 
+            // Voice dictation — shown only when a recognition provider exists on-device.
+            // Turns red while listening; tapping again stops and keeps what was heard.
+            if (voice.isAvailable) {
+                IconButton(
+                    onClick = { toggleVoice() },
+                    enabled = enabled || voice.isListening,
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = if (voice.isListening) "Stop dictation" else "Dictate",
+                        tint = when {
+                            voice.isListening -> Error
+                            enabled -> OnSurfaceVariant
+                            else -> OnSurfaceFaint
+                        },
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
+            }
+
             // Attach (add) icon — vertically centered by the Row
             IconButton(
                 onClick = { filePicker.launch("*/*") },
@@ -245,6 +303,9 @@ fun PromptInput(
                         if (busy) {
                             onStop()
                         } else {
+                            // Drop any in-flight transcript so it can't repopulate the
+                            // field after we clear it below.
+                            voice.cancel()
                             val trimmed = text.trim()
                             onSend(trimmed, pendingAttachments.map { it.part })
                             text = ""

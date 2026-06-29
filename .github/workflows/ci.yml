@@ -9,6 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  rename-gate:
+    # Acceptance gate for the Forge -> Opcode42 rename (plans/14 §2.7): asserts no
+    # stray "forge" (outside the documented repo seam + English "forget"), no
+    # forge-named paths, opencode wire identifiers untouched, and the new Opcode42
+    # names present. Pure git-grep; no toolchain needed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rename acceptance gate
+        run: bash scripts/check-rename.sh
+
   build-test-lint:
     runs-on: ubuntu-latest
     steps:

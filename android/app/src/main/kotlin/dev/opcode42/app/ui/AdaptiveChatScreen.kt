@@ -195,14 +195,16 @@ fun AdaptiveChatScreen(
         }
     }
 
-    val railPane: @Composable (Modifier, () -> Unit) -> Unit = { mod, onDone ->
+    // onSelect runs when a session/new-session is chosen (it may keep a persistent rail
+    // open); onCollapse runs only for the explicit collapse chevron (it always closes).
+    val railPane: @Composable (Modifier, () -> Unit, () -> Unit) -> Unit = { mod, onSelect, onCollapse ->
         NavRailPane(
             uiState = sessionListState,
             activeSessionId = sessionId,
             activeDirectory = chatUiState.session?.directory,
-            onSelectSession = { id -> onDone(); onNavigateToSession(id) },
+            onSelectSession = { id -> onSelect(); onNavigateToSession(id) },
             onNewSession = {
-                onDone()
+                onSelect()
                 onNewSession()
             },
             onQueryChange = sessionListViewModel::setQuery,
@@ -214,7 +216,7 @@ fun AdaptiveChatScreen(
             onReplyPermission = sessionListViewModel::replyPermission,
             onReplyQuestion = sessionListViewModel::replyQuestion,
             onSkipQuestion = sessionListViewModel::rejectQuestion,
-            onCollapse = onDone,
+            onCollapse = onCollapse,
             modifier = mod,
         )
     }
@@ -283,7 +285,8 @@ fun AdaptiveChatScreen(
                 drawerState = drawerState,
                 drawerContent = {
                     ModalDrawerSheet(Modifier.width(300.dp), drawerContainerColor = Surface) {
-                        railPane(Modifier.fillMaxSize()) { scope.launch { drawerState.close() } }
+                        val closeDrawer = { scope.launch { drawerState.close() }; Unit }
+                        railPane(Modifier.fillMaxSize(), closeDrawer, closeDrawer)
                     }
                 },
             ) {
@@ -297,7 +300,14 @@ fun AdaptiveChatScreen(
                     exit = slideOutHorizontally { -it } + shrinkHorizontally(shrinkTowards = Alignment.Start),
                 ) {
                     Row(Modifier.fillMaxHeight()) {
-                        railPane(Modifier.width(220.dp).fillMaxHeight()) { railOpen = false }
+                        // Selecting a session keeps the persistent triptych rail open (only a
+                        // manually-opened Medium rail collapses); the chat content swaps in
+                        // place. The collapse chevron always closes the rail.
+                        railPane(
+                            Modifier.width(220.dp).fillMaxHeight(),
+                            { if (!layout.railPersistent) railOpen = false },
+                            { railOpen = false },
+                        )
                         Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                     }
                 }

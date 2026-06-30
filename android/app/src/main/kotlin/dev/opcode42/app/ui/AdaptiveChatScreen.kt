@@ -119,6 +119,11 @@ fun AdaptiveChatScreen(
             }
         }
     }
+    // Multi-pane has no full-screen session-list error surface (that lives in single-pane
+    // SessionListScreen), so a catastrophic load failure is surfaced here as a snackbar instead.
+    LaunchedEffect(sessionListState.error) {
+        sessionListState.error?.let { sessionSnackbar.showSnackbar(it) }
+    }
 
     val windowSize = currentWindowAdaptiveInfo().windowSizeClass
     val layout = remember(windowSize.windowWidthSizeClass, windowSize.windowHeightSizeClass) {

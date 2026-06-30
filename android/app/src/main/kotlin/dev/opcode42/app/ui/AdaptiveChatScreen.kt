@@ -15,6 +15,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
@@ -34,6 +36,7 @@ import androidx.window.core.layout.WindowWidthSizeClass
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.model.SnapshotFileDiff
 import dev.opcode42.core.model.TokenUsage
+import dev.opcode42.core.design.brand.Spinner
 import dev.opcode42.core.design.theme.*
 import dev.opcode42.feature.chat.ChatViewModel
 import dev.opcode42.feature.chat.DRAFT_SESSION_ID
@@ -461,7 +464,6 @@ internal fun SessionInfoPanel(
             InfoSectionHeader("SESSION")
             InfoRow("title", session.title ?: "Untitled")
             InfoRow("id", session.id.take(8))
-            session.directory?.let { InfoRow("dir", it) }
         }
 
         if (modelID != null || providerID != null) {
@@ -570,19 +572,24 @@ internal fun SessionInfoPanel(
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
                 ) {
-                    val (dot, dotColor) = when (todo.status) {
-                        "completed" -> "✓" to Tertiary
-                        "in_progress" -> "→" to Secondary
-                        else -> "·" to OnSurfaceFaint
+                    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                        when (todo.status) {
+                            "completed" -> Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Tertiary,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            "in_progress" -> Spinner(size = 13.dp, color = Secondary)
+                            else -> Icon(
+                                Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = OnSurfaceFaint,
+                                modifier = Modifier.size(12.dp),
+                            )
+                        }
                     }
-                    Text(
-                        text = dot,
-                        fontFamily = Opcode42Mono,
-                        fontSize = 12.5.sp,
-                        color = dotColor,
-                        modifier = Modifier.width(16.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = todo.content,
                         fontSize = 13.5.sp,

@@ -176,17 +176,6 @@ fun ChatScreen(
     Scaffold(
         containerColor = Surface,
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            if (!isMultiPane && sessionDirectory != null) {
-                FloatingActionButton(
-                    onClick = { onOpenTerminal(sessionDirectory) },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ) {
-                    Icon(Icons.Default.Terminal, contentDescription = "Open Terminal")
-                }
-            }
-        },
         topBar = {
             // Custom 52dp dense bar (design §1) — M3 TopAppBar's 64dp is too tall.
             Column(Modifier.background(Surface).then(if (applySystemInsets) Modifier.statusBarsPadding() else Modifier)) {
@@ -292,6 +281,9 @@ fun ChatScreen(
                             expanded = showOverflow,
                             onDismiss = { showOverflow = false },
                             isShared = uiState.session?.share != null,
+                            onTerminal = sessionDirectory?.let { dir ->
+                                { showOverflow = false; onOpenTerminal(dir) }
+                            },
                             onRename = {
                                 showOverflow = false
                                 showRenameDialog = true
@@ -331,16 +323,20 @@ fun ChatScreen(
                     .background(Surface)
                     .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
             ) {
-                HorizontalDivider(color = Hairline)
-                StatusStrip(
-                    mode = displayAgent,
-                    model = displayModel,
-                    provider = displayProvider,
-                    tokens = uiState.session?.tokens,
-                    onClick = if (providers.isNotEmpty() || agents.isNotEmpty()) {
-                        { showModelPicker = true }
-                    } else null,
-                )
+                // Multi-pane carries the mode + model in the top bar (top-right), so the
+                // composer's status strip is phone-only — no redundant bar above the box.
+                if (!isMultiPane) {
+                    HorizontalDivider(color = Hairline)
+                    StatusStrip(
+                        mode = displayAgent,
+                        model = displayModel,
+                        provider = displayProvider,
+                        tokens = uiState.session?.tokens,
+                        onClick = if (providers.isNotEmpty() || agents.isNotEmpty()) {
+                            { showModelPicker = true }
+                        } else null,
+                    )
+                }
                 HorizontalDivider(color = Hairline)
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
@@ -545,6 +541,7 @@ private fun OverflowMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     isShared: Boolean,
+    onTerminal: (() -> Unit)? = null,
     onRename: () -> Unit,
     onFork: () -> Unit,
     onSummarize: () -> Unit,
@@ -557,6 +554,14 @@ private fun OverflowMenu(
         onDismissRequest = onDismiss,
         containerColor = SurfaceContainerHigh,
     ) {
+        onTerminal?.let { open ->
+            DropdownMenuItem(
+                text = { Text("Open terminal", color = OnSurface) },
+                leadingIcon = { Icon(Icons.Default.Terminal, contentDescription = null, tint = OnSurfaceVariant) },
+                onClick = open,
+            )
+            HorizontalDivider(color = Hairline)
+        }
         DropdownMenuItem(
             text = { Text("Rename session", color = OnSurface) },
             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = OnSurfaceVariant) },

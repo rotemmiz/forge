@@ -89,4 +89,19 @@ class DefaultSessionRepositoryTest {
         assertTrue(result.isSuccess)
         assertEquals(listOf("s1"), store.state.value.sessions.map { it.id })
     }
+
+    @Test fun refreshAll_failsWhenEveryQueryFails() = runTest {
+        // Daemon unreachable: /project and the global /session both 500. With no project dirs, the
+        // only query is the global one, which fails → the whole refresh is a failure (so the UI can
+        // show a retry instead of a misleading empty list).
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(500).setBody("down")
+        }
+
+        val result = repo.refreshAll()
+
+        assertTrue(result.isFailure)
+        assertEquals(emptyList<String>(), store.state.value.sessions.map { it.id })
+    }
 }

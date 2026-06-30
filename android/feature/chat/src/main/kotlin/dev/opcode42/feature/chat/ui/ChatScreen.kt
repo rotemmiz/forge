@@ -44,6 +44,7 @@ import dev.opcode42.core.model.Part
 import dev.opcode42.core.model.PatchPart
 import dev.opcode42.core.model.SnapshotFileDiff
 import dev.opcode42.core.store.OptimisticMessage
+import dev.opcode42.feature.chat.ChatEvent
 import dev.opcode42.feature.chat.ChatViewModel
 import dev.opcode42.feature.chat.commands.ChatCommandActions
 import dev.opcode42.feature.chat.commands.PaletteEntry
@@ -78,6 +79,16 @@ fun ChatScreen(
     val selectedModel by viewModel.selectedModel.collectAsStateWithLifecycle()
     val selectedAgent by viewModel.selectedAgent.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    // Surface one-shot errors (a failed send/rename/share/…) as a snackbar.
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is ChatEvent.ShowError -> snackbarHostState.showSnackbar(event.message)
+            }
+        }
+    }
 
     // ── Sticky-bottom auto-scroll ──────────────────────────────────────────────
     // The message list is reverseLayout: the newest message is index 0, anchored at the
@@ -157,6 +168,7 @@ fun ChatScreen(
 
     Scaffold(
         containerColor = Surface,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (!isMultiPane && sessionDirectory != null) {
                 FloatingActionButton(
@@ -334,7 +346,8 @@ fun ChatScreen(
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
                     enabled = pendingPermission == null && pendingQuestion == null,
-                    busy = uiState.sessionStatus == "busy",
+                    // isSending bridges the gap before the server flips status to "busy".
+                    busy = uiState.sessionStatus == "busy" || uiState.isSending,
                     onStop = { viewModel.abort() },
                     paletteEntries = paletteEntries,
                     onSearchFiles = { query -> viewModel.searchFiles(query) },
@@ -397,6 +410,11 @@ fun ChatScreen(
                         diffs = uiState.diffs,
                     )
                 }
+            }
+
+            // Initial message load: entering a session before anything has streamed in.
+            if (uiState.isLoading && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
 
             // Todos dock — only in single/medium pane; moves to info panel in expanded.

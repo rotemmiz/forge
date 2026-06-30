@@ -36,6 +36,7 @@ import dev.opcode42.feature.chat.ChatViewModel
 import dev.opcode42.feature.chat.TodoItem
 import dev.opcode42.feature.chat.ui.*
 import dev.opcode42.feature.sessions.SessionFilter
+import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListUiState
 import dev.opcode42.feature.sessions.SessionListViewModel
 import dev.opcode42.feature.sessions.ui.SessionBrowser
@@ -106,6 +107,23 @@ fun AdaptiveChatScreen(
 ) {
     val sessionListState by sessionListViewModel.uiState.collectAsStateWithLifecycle()
     val chatUiState by chatViewModel.uiState.collectAsStateWithLifecycle()
+
+    // Session-list action errors (rename/archive/delete/reply/… from the rail) surface here in
+    // multi-pane — the single-pane SessionListScreen isn't composed in this host, so without this
+    // collector those events would have no consumer. (Chat-side errors are handled by ChatScreen.)
+    val sessionSnackbar = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        sessionListViewModel.events.collect { event ->
+            when (event) {
+                is SessionListEvent.ShowError -> sessionSnackbar.showSnackbar(event.message)
+            }
+        }
+    }
+    // Multi-pane has no full-screen session-list error surface (that lives in single-pane
+    // SessionListScreen), so a catastrophic load failure is surfaced here as a snackbar instead.
+    LaunchedEffect(sessionListState.error) {
+        sessionListState.error?.let { sessionSnackbar.showSnackbar(it) }
+    }
 
     val windowSize = currentWindowAdaptiveInfo().windowSizeClass
     val layout = remember(windowSize.windowWidthSizeClass, windowSize.windowHeightSizeClass) {
@@ -262,6 +280,8 @@ fun AdaptiveChatScreen(
                 centerPane(Modifier.weight(1f))
             }
         }
+
+        SnackbarHost(sessionSnackbar, Modifier.align(Alignment.BottomCenter))
     }
 }
 

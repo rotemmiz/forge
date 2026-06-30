@@ -6,9 +6,11 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.opcode42.core.data.ChatRepository
 import dev.opcode42.core.data.SessionRepository
+import dev.opcode42.core.data.toUserMessage
 import dev.opcode42.core.model.*
 import dev.opcode42.core.store.ConnectionState
 import dev.opcode42.core.store.OptimisticMessage
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -22,6 +24,11 @@ data class TodoItem(
     val status: String,
     val priority: String? = null,
 )
+
+/** One-shot UI events consumed once by the screen (e.g. a transient error snackbar). */
+sealed interface ChatEvent {
+    data class ShowError(val message: String) : ChatEvent
+}
 
 data class ChatUiState(
     val session: Session? = null,
@@ -53,8 +60,16 @@ class ChatViewModel @Inject constructor(
 
     private val sessionId: String = checkNotNull(savedStateHandle["sessionId"])
 
-    val uiState: StateFlow<ChatUiState> = chatRepo.observe(sessionId)
-        .map { snap ->
+    // Transient UI flags not derived from the store — combined into uiState below.
+    private val _isSending = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(false)
+
+    /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
+    private val _events = Channel<ChatEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    val uiState: StateFlow<ChatUiState> =
+        combine(chatRepo.observe(sessionId), _isSending, _isLoading) { snap, sending, loading ->
             val messages = snap.messages
             // Status-strip context comes from the most recent assistant turn that
             // carries a model/agent (the live "what's running" state).
@@ -81,9 +96,10 @@ class ChatViewModel @Inject constructor(
                 contextTokens = messages.lastOrNull {
                     it.role == "assistant" && (it.tokens?.contextFootprint ?: 0L) > 0L
                 }?.tokens,
+                isLoading = loading,
+                isSending = sending,
             )
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     private val directory: String? get() = uiState.value.session?.directory
 
@@ -166,16 +182,32 @@ class ChatViewModel @Inject constructor(
 
     private fun loadMessages() {
         viewModelScope.launch {
-            chatRepo.loadMessages(sessionId, directory)
-                .onFailure { android.util.Log.e("ChatVM", "loadMessages failed", it) }
+            _isLoading.value = true
+            try {
+                chatRepo.loadMessages(sessionId, directory)
+                    .onFailure { android.util.Log.e("ChatVM", "loadMessages failed", it) }
+            } finally {
+                _isLoading.value = false
+            }
         }
+    }
+
+    /** Log a failed user action and surface it as a one-shot snackbar event. */
+    private fun emitError(action: String, cause: Throwable) {
+        android.util.Log.w("ChatVM", "$action failed", cause)
+        _events.trySend(ChatEvent.ShowError(cause.toUserMessage()))
     }
 
     /** A7/C5 — Optimistic prompt submit with optional file attachments */
     fun sendPrompt(text: String, attachments: List<FilePartInput> = emptyList()) {
         viewModelScope.launch {
-            chatRepo.send(sessionId, text, directory, attachments, _selectedModel.value, _selectedAgent.value)
-                .onFailure { android.util.Log.w("ChatVM", "sendPrompt failed", it) }
+            _isSending.value = true
+            try {
+                chatRepo.send(sessionId, text, directory, attachments, _selectedModel.value, _selectedAgent.value)
+                    .onFailure { emitError("send", it) }
+            } finally {
+                _isSending.value = false
+            }
         }
     }
 
@@ -189,7 +221,7 @@ class ChatViewModel @Inject constructor(
     fun runCommand(name: String, arguments: String) {
         viewModelScope.launch {
             chatRepo.runCommand(sessionId, name, arguments, directory)
-                .onFailure { android.util.Log.w("ChatVM", "runCommand failed", it) }
+                .onFailure { emitError("command", it) }
         }
     }
 
@@ -198,7 +230,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             sessionRepo.fork(sessionId)
                 .onSuccess { onForked(it.id) }
-                .onFailure { android.util.Log.w("ChatVM", "forkSession failed", it) }
+                .onFailure { emitError("fork", it) }
         }
     }
 
@@ -207,7 +239,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             sessionRepo.delete(sessionId)
                 .onSuccess { onDeleted() }
-                .onFailure { android.util.Log.w("ChatVM", "deleteSession failed", it) }
+                .onFailure { emitError("delete", it) }
         }
     }
 
@@ -225,7 +257,7 @@ class ChatViewModel @Inject constructor(
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
             sessionRepo.rename(sessionId, trimmed, directory)
-                .onFailure { android.util.Log.w("ChatVM", "renameSession failed", it) }
+                .onFailure { emitError("rename", it) }
         }
     }
 
@@ -238,7 +270,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             sessionRepo.archive(sessionId, directory)
                 .onSuccess { onArchived() }
-                .onFailure { android.util.Log.w("ChatVM", "archiveSession failed", it) }
+                .onFailure { emitError("archive", it) }
         }
     }
 
@@ -250,7 +282,7 @@ class ChatViewModel @Inject constructor(
         }
         viewModelScope.launch {
             sessionRepo.summarize(sessionId, model, directory)
-                .onFailure { android.util.Log.w("ChatVM", "summarize failed", it) }
+                .onFailure { emitError("summarize", it) }
         }
     }
 
@@ -258,7 +290,7 @@ class ChatViewModel @Inject constructor(
     fun shareSession() {
         viewModelScope.launch {
             sessionRepo.share(sessionId, directory)
-                .onFailure { android.util.Log.w("ChatVM", "shareSession failed", it) }
+                .onFailure { emitError("share", it) }
         }
     }
 
@@ -266,7 +298,7 @@ class ChatViewModel @Inject constructor(
     fun unshareSession() {
         viewModelScope.launch {
             sessionRepo.unshare(sessionId, directory)
-                .onFailure { android.util.Log.w("ChatVM", "unshareSession failed", it) }
+                .onFailure { emitError("unshare", it) }
         }
     }
 
@@ -274,22 +306,28 @@ class ChatViewModel @Inject constructor(
     fun abort() {
         viewModelScope.launch {
             sessionRepo.abort(sessionId, directory)
-                .onFailure { android.util.Log.w("ChatVM", "abortSession failed", it) }
+                .onFailure { emitError("abort", it) }
         }
     }
 
     /** A8 — Permission reply */
     fun replyPermission(requestId: String, allow: Boolean) {
-        viewModelScope.launch { sessionRepo.replyPermission(requestId, allow) }
+        viewModelScope.launch {
+            sessionRepo.replyPermission(requestId, allow).onFailure { emitError("reply", it) }
+        }
     }
 
     /** A8 — Question reply */
     fun replyQuestion(requestId: String, answer: String) {
-        viewModelScope.launch { sessionRepo.replyQuestion(requestId, answer) }
+        viewModelScope.launch {
+            sessionRepo.replyQuestion(requestId, answer).onFailure { emitError("reply", it) }
+        }
     }
 
     fun rejectQuestion(requestId: String) {
-        viewModelScope.launch { sessionRepo.rejectQuestion(requestId) }
+        viewModelScope.launch {
+            sessionRepo.rejectQuestion(requestId).onFailure { emitError("reject", it) }
+        }
     }
 }
 

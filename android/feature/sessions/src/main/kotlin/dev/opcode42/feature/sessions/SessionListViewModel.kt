@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.opcode42.core.data.SessionRepository
+import dev.opcode42.core.data.toUserMessage
 import dev.opcode42.core.model.PermissionRequest
 import dev.opcode42.core.model.QuestionRequest
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.network.ActiveConnectionProvider
 import dev.opcode42.feature.sessions.ui.isSessionBusy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -57,6 +60,14 @@ data class SessionListUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
 )
+
+/** Transient refresh status merged into [SessionListUiState] (kept off the store-derived path). */
+private data class ListStatus(val isLoading: Boolean = false, val error: String? = null)
+
+/** One-shot UI events consumed once by the screen (e.g. a transient error snackbar). */
+sealed interface SessionListEvent {
+    data class ShowError(val message: String) : SessionListEvent
+}
 
 /** The slice of [AppState] the session list reads — gates re-projection and is the projection input. */
 internal data class SessionInputs(
@@ -148,6 +159,13 @@ class SessionListViewModel @Inject constructor(
     private val _query = MutableStateFlow("")
     private val _filter = MutableStateFlow(SessionFilter.All)
 
+    /** Transient list status (refresh spinner + a load error), merged into uiState below. */
+    private val _status = MutableStateFlow(ListStatus())
+
+    /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
+    private val _events = Channel<SessionListEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
     val uiState: StateFlow<SessionListUiState> =
         combine(
             // Only re-project when a field the list actually reads changes — not on every
@@ -161,11 +179,18 @@ class SessionListViewModel @Inject constructor(
             _filter,
         ) { inputs, showArchived, query, filter ->
             projectSessionList(inputs, showArchived, query, filter)
+        }.combine(_status) { projected, status ->
+            projected.copy(isLoading = status.isLoading, error = status.error)
         }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
+
+    private fun emitError(action: String, cause: Throwable) {
+        android.util.Log.w("SessionListVM", "$action failed", cause)
+        _events.trySend(SessionListEvent.ShowError(cause.toUserMessage()))
+    }
 
     init {
         loadSessions()
@@ -192,18 +217,23 @@ class SessionListViewModel @Inject constructor(
 
     /**
      * Refresh the global session list. The cross-project fan-out (enumerate projects, query each
-     * worktree + sandbox in parallel, dedupe) lives in [SessionRepository.refreshAll]; a failure
-     * is silent here because sessions also arrive via SSE once connected.
+     * worktree + sandbox in parallel, dedupe) lives in [SessionRepository.refreshAll], which is
+     * resilient per-directory; the whole call only fails catastrophically (e.g. no server). Drives
+     * the list's loading spinner and a persistent error line.
      */
     fun loadSessions() {
-        viewModelScope.launch { sessionRepo.refreshAll() }
+        viewModelScope.launch {
+            _status.value = _status.value.copy(isLoading = true)
+            val result = sessionRepo.refreshAll()
+            _status.value = ListStatus(isLoading = false, error = result.exceptionOrNull()?.toUserMessage())
+        }
     }
 
     fun forkSession(sessionId: String, onForked: (Session) -> Unit) {
         viewModelScope.launch {
             sessionRepo.fork(sessionId)
                 .onSuccess { onForked(it) }
-                .onFailure { android.util.Log.e("SessionListVM", "forkSession failed", it) }
+                .onFailure { emitError("fork", it) }
         }
     }
 
@@ -213,7 +243,7 @@ class SessionListViewModel @Inject constructor(
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
             sessionRepo.rename(sessionId, trimmed)
-                .onFailure { android.util.Log.e("SessionListVM", "renameSession failed", it) }
+                .onFailure { emitError("rename", it) }
         }
     }
 
@@ -225,14 +255,14 @@ class SessionListViewModel @Inject constructor(
     fun archiveSession(sessionId: String) {
         viewModelScope.launch {
             sessionRepo.archive(sessionId)
-                .onFailure { android.util.Log.e("SessionListVM", "archiveSession failed", it) }
+                .onFailure { emitError("archive", it) }
         }
     }
 
     fun deleteSession(sessionId: String) {
         viewModelScope.launch {
             sessionRepo.delete(sessionId)
-                .onFailure { android.util.Log.e("SessionListVM", "deleteSession failed", it) }
+                .onFailure { emitError("delete", it) }
         }
     }
 
@@ -243,24 +273,32 @@ class SessionListViewModel @Inject constructor(
 
     /** Approve or deny a session's pending permission from the menu. */
     fun replyPermission(requestId: String, allow: Boolean) {
-        viewModelScope.launch { sessionRepo.replyPermission(requestId, allow) }
+        viewModelScope.launch {
+            sessionRepo.replyPermission(requestId, allow).onFailure { emitError("reply", it) }
+        }
     }
 
     /** Answer a session's pending question from the menu. */
     fun replyQuestion(requestId: String, answer: String) {
-        viewModelScope.launch { sessionRepo.replyQuestion(requestId, answer) }
+        viewModelScope.launch {
+            sessionRepo.replyQuestion(requestId, answer).onFailure { emitError("reply", it) }
+        }
     }
 
     /** Skip a session's pending question from the menu. */
     fun rejectQuestion(requestId: String) {
-        viewModelScope.launch { sessionRepo.rejectQuestion(requestId) }
+        viewModelScope.launch {
+            sessionRepo.rejectQuestion(requestId).onFailure { emitError("reject", it) }
+        }
     }
 
     fun createSession(directory: String? = null, onCreated: (Session) -> Unit) {
         viewModelScope.launch {
             _isCreating.value = true
             try {
-                sessionRepo.create(directory).onSuccess { onCreated(it) }
+                sessionRepo.create(directory)
+                    .onSuccess { onCreated(it) }
+                    .onFailure { emitError("create session", it) }
             } finally {
                 _isCreating.value = false
             }

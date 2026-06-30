@@ -120,6 +120,29 @@ class Opcode42Client @Inject constructor(
                 ?: emptyList()
         }
 
+    /**
+     * GET /vcs/diff?directory=&mode=git — the working-tree changes *with patches* (the heavier
+     * sibling of [getVcsStatus], which carries no patch). Each `VcsFileDiff` has the same wire
+     * shape as a session snapshot diff, so it decodes into [SnapshotFileDiff] with `patch`
+     * populated — letting the diff viewer render it through the chat's `UnifiedDiffView`. Uses a
+     * manual URL (like [getSessionDiff]) for the extra `mode` query param. Best-effort: a backend
+     * without `/vcs` returns non-2xx, which throws and the caller swallows it.
+     */
+    suspend fun getVcsDiff(directory: String, mode: String = "git"): List<SnapshotFileDiff> {
+        val base = transport.requireBaseUrl()
+        val url = "$base/vcs/diff" +
+            "?directory=${HttpTransport.enc(directory)}" +
+            "&mode=${HttpTransport.enc(mode)}"
+        val req = Request.Builder().url(url)
+            .header("X-Opencode-Directory", HttpTransport.enc(directory))
+            .get()
+            .build()
+        return transport.execute(req) { json ->
+            (json as? JsonArray)?.map { Opcode42Json.decodeFromJsonElement(SnapshotFileDiff.serializer(), it) }
+                ?: emptyList()
+        }
+    }
+
     /** GET /provider — providers and their models, for the model picker. */
     suspend fun listProviders(directory: String? = null): ProvidersResponse =
         transport.get("/provider", directory = directory) { json ->

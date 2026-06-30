@@ -166,6 +166,9 @@ fun AdaptiveChatScreen(
     val chatUiState by chatViewModel.uiState.collectAsStateWithLifecycle()
     val chatCommands by chatViewModel.commands.collectAsStateWithLifecycle()
 
+    // A tapped CHANGES row opens the diff viewer for that file; null = closed.
+    var openDiff by remember { mutableStateOf<SnapshotFileDiff?>(null) }
+
     // Session-list action errors (rename/archive/delete/reply/… from the rail) surface here — the
     // rail is the app's only session-list surface, so without this collector those events would
     // have no consumer. (Chat-side errors are handled by ChatScreen.)
@@ -294,6 +297,7 @@ fun AdaptiveChatScreen(
                 diffs = aggregatedDiffs,
                 commands = chatCommands,
                 messageCount = chatUiState.messages.size,
+                onDiffClick = { openDiff = it },
                 modifier = Modifier.width(280.dp).fillMaxHeight(),
             )
         }
@@ -374,6 +378,15 @@ fun AdaptiveChatScreen(
         }
 
         SnackbarHost(sessionSnackbar, Modifier.align(Alignment.BottomCenter))
+
+        // A tapped CHANGES row → the diff viewer for that file, in the chat's diff style.
+        openDiff?.let { diff ->
+            DiffViewerDialog(
+                summary = diff,
+                loadDiff = chatViewModel::fileDiff,
+                onDismiss = { openDiff = null },
+            )
+        }
     }
 }
 
@@ -622,6 +635,7 @@ internal fun SessionInfoPanel(
     diffs: List<SnapshotFileDiff> = emptyList(),
     commands: List<CommandInfo> = emptyList(),
     messageCount: Int = 0,
+    onDiffClick: (SnapshotFileDiff) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -742,6 +756,7 @@ internal fun SessionInfoPanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(4.dp))
+                            .clickable { onDiffClick(diff) }
                             .then(
                                 if (active) {
                                     Modifier

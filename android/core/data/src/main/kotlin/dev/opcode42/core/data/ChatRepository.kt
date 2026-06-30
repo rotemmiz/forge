@@ -77,6 +77,10 @@ interface ChatRepository {
      *  net file list. Failure (no `/vcs`) is a normal result the caller treats as "no changes". */
     suspend fun vcsStatus(directory: String): Result<List<SnapshotFileDiff>>
 
+    /** Working-tree changes for [directory] *with patches* (`/vcs/diff`) — the source the
+     *  diff viewer renders. Heavier than [vcsStatus]; fetched lazily when a CHANGES row is tapped. */
+    suspend fun vcsDiff(directory: String): Result<List<SnapshotFileDiff>>
+
     suspend fun listCommands(directory: String?): Result<List<CommandInfo>>
     suspend fun listProviders(directory: String?): Result<ProvidersResponse>
     suspend fun listAgents(directory: String?): Result<List<AgentInfo>>
@@ -169,6 +173,9 @@ class DefaultChatRepository @Inject constructor(
 
     override suspend fun vcsStatus(directory: String): Result<List<SnapshotFileDiff>> =
         resultOf { client.getVcsStatus(directory) }
+
+    override suspend fun vcsDiff(directory: String): Result<List<SnapshotFileDiff>> =
+        resultOf { client.getVcsDiff(directory) }
 
     override suspend fun listCommands(directory: String?): Result<List<CommandInfo>> =
         resultOf { client.listCommands(directory) }

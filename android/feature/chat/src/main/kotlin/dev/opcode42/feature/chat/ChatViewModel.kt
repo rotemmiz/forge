@@ -13,6 +13,8 @@ import dev.opcode42.core.store.OptimisticMessage
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -95,6 +97,12 @@ class ChatViewModel @Inject constructor(
 
     /** Working-tree changes (`git status`) for the session directory; refreshed on idle. */
     private val _changedFiles = MutableStateFlow<List<SnapshotFileDiff>>(emptyList())
+
+    /** Lazily-fetched `/vcs/diff` patches (the heavier sibling of [_changedFiles]) for the diff
+     *  viewer: fetched once on the first tapped row, reused for later taps, and invalidated on each
+     *  idle refresh so a finished turn re-fetches. Guarded by [vcsDiffLock] for the read-or-fetch. */
+    private var vcsDiffCache: List<SnapshotFileDiff>? = null
+    private val vcsDiffLock = Mutex()
 
     /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
     private val _events = Channel<ChatEvent>(Channel.BUFFERED)
@@ -211,7 +219,11 @@ class ChatViewModel @Inject constructor(
             // edited files). Best-effort — a backend without /vcs leaves the list empty.
             viewModelScope.launch {
                 val dir = uiState.first { it.session?.directory != null }.session?.directory ?: return@launch
-                suspend fun refresh() = chatRepo.vcsStatus(dir).onSuccess { _changedFiles.value = it }
+                suspend fun refresh() {
+                    // Drop any cached patches so the next diff-viewer tap re-fetches this turn's edits.
+                    vcsDiffLock.withLock { vcsDiffCache = null }
+                    chatRepo.vcsStatus(dir).onSuccess { _changedFiles.value = it }
+                }
                 refresh()
                 chatRepo.observe(sessionId)
                     .map { it.status }
@@ -324,6 +336,26 @@ class ChatViewModel @Inject constructor(
         chatRepo.searchFiles(query, directory)
             .onFailure { android.util.Log.w("ChatVM", "findFiles failed", it) }
             .getOrDefault(emptyList())
+
+    /**
+     * The patch for one CHANGES file, for the diff viewer. Fetches `/vcs/diff` for the session
+     * directory once (under [vcsDiffLock]) and caches the result, returning the entry whose `file`
+     * matches; later taps reuse the cache until an idle refresh clears it. Best-effort: a backend
+     * without `/vcs` yields an empty list, so the caller sees null and shows "Empty diff."
+     */
+    suspend fun fileDiff(file: String): SnapshotFileDiff? {
+        val dir = directory ?: return null
+        val diffs = vcsDiffLock.withLock {
+            vcsDiffCache ?: chatRepo.vcsDiff(dir).getOrDefault(emptyList()).also { vcsDiffCache = it }
+        }
+        // The CHANGES row's [file] was relativized to [dir] for display; /vcs/diff paths carry no
+        // relativity guarantee, so relativize each candidate the same way before matching (a no-op
+        // for opencode, which already returns repo-relative paths — kept for a divergent backend).
+        val base = dir.removeSuffix("/")
+        fun relToDir(p: String?): String? =
+            if (p != null && p.startsWith("$base/")) p.removePrefix("$base/") else p
+        return diffs.firstOrNull { relToDir(it.file) == file }
+    }
 
     /** Slash palette — run a command by name with the trailing arguments. */
     fun runCommand(name: String, arguments: String) {

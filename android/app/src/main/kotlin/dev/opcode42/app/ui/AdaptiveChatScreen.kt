@@ -2,6 +2,9 @@ package dev.opcode42.app.ui
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,9 +31,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -47,11 +54,13 @@ import dev.opcode42.feature.chat.DRAFT_SESSION_ID
 import dev.opcode42.feature.chat.TodoItem
 import dev.opcode42.feature.chat.ui.*
 import dev.opcode42.feature.sessions.SessionFilter
+import dev.opcode42.feature.sessions.homeRelativeDir
 import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListUiState
 import dev.opcode42.feature.sessions.SessionListViewModel
 import dev.opcode42.feature.sessions.ui.SessionBrowser
 import dev.opcode42.feature.sessions.ui.isSessionBusy
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /** How the collapsible left sessions menu is presented. Closed by default in both modes. */
@@ -184,6 +193,15 @@ fun AdaptiveChatScreen(
     LaunchedEffect(layout) {
         if (drawerState.isOpen) drawerState.close()
     }
+    // The rail's open⇄collapsed morph progress (1f = open 220dp, 0f = collapsed 60dp). Declared
+    // WITHOUT `by` so the host never recomposes per frame; the provider is read only inside the
+    // draw/layout lambdas of the rail's children (see Modifier.railWidth, NavRailPane, SessionRow).
+    val railProgress = animateFloatAsState(
+        targetValue = if (railOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+        label = "railProgress",
+    )
+    val railProgressProvider: () -> Float = { railProgress.value }
 
     // Right info panel: collapsible, but ON by default. Re-keyed on layout so it returns
     // to open when the layout changes. Only meaningful when the layout has a right panel.
@@ -211,31 +229,35 @@ fun AdaptiveChatScreen(
     }
 
     // onSelect runs when a session/new-session is chosen (it may keep a persistent rail
-    // open); onCollapse runs only for the explicit collapse chevron (it always closes).
-    val railPane: @Composable (Modifier, () -> Unit, () -> Unit) -> Unit = { mod, onSelect, onCollapse ->
-        NavRailPane(
-            uiState = sessionListState,
-            activeSessionId = sessionId,
-            activeDirectory = chatUiState.session?.directory,
-            onSelectSession = { id -> onSelect(); onNavigateToSession(id) },
-            onNewSession = {
-                onSelect()
-                onNewSession()
-            },
-            onOpenTasksBoard = onOpenTasksBoard,
-            onQueryChange = sessionListViewModel::setQuery,
-            onFilterChange = sessionListViewModel::setFilter,
-            onRename = sessionListViewModel::renameSession,
-            onArchive = sessionListViewModel::archiveSession,
-            onFork = { id -> sessionListViewModel.forkSession(id) { onNavigateToSession(it.id) } },
-            onDelete = sessionListViewModel::deleteSession,
-            onReplyPermission = sessionListViewModel::replyPermission,
-            onReplyQuestion = sessionListViewModel::replyQuestion,
-            onSkipQuestion = sessionListViewModel::rejectQuestion,
-            onCollapse = onCollapse,
-            modifier = mod,
-        )
-    }
+    // open); onCollapse runs only for the explicit collapse chevron (it always closes);
+    // onExpand re-opens from the collapsed band; progress drives the open⇄collapsed morph.
+    val railPane: @Composable (Modifier, () -> Unit, () -> Unit, () -> Unit, () -> Float) -> Unit =
+        { mod, onSelect, onCollapse, onExpand, progress ->
+            NavRailPane(
+                uiState = sessionListState,
+                activeSessionId = sessionId,
+                activeDirectory = chatUiState.session?.directory,
+                onSelectSession = { id -> onSelect(); onNavigateToSession(id) },
+                onNewSession = {
+                    onSelect()
+                    onNewSession()
+                },
+                onOpenTasksBoard = onOpenTasksBoard,
+                onQueryChange = sessionListViewModel::setQuery,
+                onFilterChange = sessionListViewModel::setFilter,
+                onRename = sessionListViewModel::renameSession,
+                onArchive = sessionListViewModel::archiveSession,
+                onFork = { id -> sessionListViewModel.forkSession(id) { onNavigateToSession(it.id) } },
+                onDelete = sessionListViewModel::deleteSession,
+                onReplyPermission = sessionListViewModel::replyPermission,
+                onReplyQuestion = sessionListViewModel::replyQuestion,
+                onSkipQuestion = sessionListViewModel::rejectQuestion,
+                onCollapse = onCollapse,
+                onExpand = onExpand,
+                progress = progress,
+                modifier = mod,
+            )
+        }
 
     val aggregatedDiffs = remember(chatUiState.diffs) {
         chatUiState.diffs.values
@@ -293,27 +315,18 @@ fun AdaptiveChatScreen(
         )
     }
 
-    // The inline rail content (full 220dp rail or the 60dp collapsed icon band).
+    // The inline rail: a single pane that MORPHS between the open 220dp rail and the
+    // collapsed 60dp icon band, width-driven by railProgress (no hard swap). Selecting a
+    // session keeps a persistent (Expanded) rail open; only a manually-opened Medium rail
+    // collapses. The collapse chevron closes; the expand chevron / collapsed search re-opens.
     val railSlot: @Composable () -> Unit = {
-        if (railOpen) {
-            // Selecting a session keeps the persistent triptych rail open (only a
-            // manually-opened Medium rail collapses). The collapse chevron always closes.
-            railPane(
-                Modifier.width(220.dp).fillMaxHeight(),
-                { if (!layout.railPersistent) railOpen = false },
-                { railOpen = false },
-            )
-        } else {
-            CollapsedRail(
-                sessions = sessionListState.groups.flatMap { it.sessions },
-                statuses = sessionListState.statuses,
-                activeId = sessionId,
-                onExpand = { railOpen = true },
-                onNew = onNewSession,
-                onOpenTasksBoard = onOpenTasksBoard,
-                onSelect = { id -> onNavigateToSession(id) },
-            )
-        }
+        railPane(
+            Modifier.railWidth(railProgressProvider).fillMaxHeight(),
+            { if (!layout.railPersistent) railOpen = false },
+            { railOpen = false },
+            { railOpen = true },
+            railProgressProvider,
+        )
     }
 
     Box(
@@ -330,7 +343,8 @@ fun AdaptiveChatScreen(
                 drawerContent = {
                     ModalDrawerSheet(Modifier.width(300.dp), drawerContainerColor = Surface) {
                         val closeDrawer = { scope.launch { drawerState.close() }; Unit }
-                        railPane(Modifier.fillMaxSize(), closeDrawer, closeDrawer)
+                        // The overlay drawer always shows the full rail (no morph): progress = 1f.
+                        railPane(Modifier.fillMaxSize(), closeDrawer, closeDrawer, {}, { 1f })
                     }
                 },
             ) {
@@ -353,157 +367,17 @@ fun AdaptiveChatScreen(
     }
 }
 
-// ─── Collapsed icon rail (narrow band) ─────────────────────────────────────────
-
-private val RailDotSize = 38.dp
-private val RailDotShape = RoundedCornerShape(8.dp)
+// ─── Rail width morph ──────────────────────────────────────────────────────────
 
 /**
- * The 60dp band the inline rail collapses to (design `SessionRail`, collapsed): an expand
- * chevron, the Conversation / Tasks nav, New, and the sessions as single-letter avatars so
- * switching + running status stay reachable without opening the full rail. Active = amber
- * tint + a left accent; a busy session shows an asterisk-loader badge at the top-right.
+ * Constrains the rail to `lerp(60dp, 220dp, progress())`, read in the layout phase so the
+ * per-frame morph never recomposes. The chat pane (a `weight(1f)` sibling) reflows smoothly.
  */
-@Composable
-private fun CollapsedRail(
-    sessions: List<Session>,
-    statuses: Map<String, String>,
-    activeId: String,
-    onExpand: () -> Unit,
-    onNew: () -> Unit,
-    onOpenTasksBoard: () -> Unit,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // Hoisted: token accessors are @Composable, so the active accent must be read here,
-    // not inside the non-composable drawBehind lambda below.
-    val accent = Secondary
-    Column(
-        modifier = modifier.width(60.dp).fillMaxHeight().background(SurfaceContainerLow),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.fillMaxWidth().height(54.dp), contentAlignment = Alignment.Center) {
-            IconButton(onClick = onExpand, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Expand navigation",
-                    tint = OnSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        HorizontalDivider(color = Hairline, thickness = 1.dp)
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // Conversation is the current view (active); Tasks opens the tasks board.
-            RailIconDot(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, onClick = {})
-            RailIconDot(Icons.AutoMirrored.Filled.FormatListBulleted, "Tasks", active = false, onClick = onOpenTasksBoard)
-            HorizontalDivider(color = Hairline, modifier = Modifier.width(24.dp).padding(vertical = 2.dp))
-            Box(
-                Modifier
-                    .size(RailDotSize)
-                    .clip(RailDotShape)
-                    .background(SurfaceContainerHigh)
-                    .border(1.dp, Hairline, RailDotShape)
-                    .clickable(onClick = onNew),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "New session", tint = Primary, modifier = Modifier.size(16.dp))
-            }
-            sessions.forEach { s ->
-                val active = s.id == activeId
-                val busy = isSessionBusy(statuses[s.id])
-                Box {
-                    Box(
-                        Modifier
-                            .size(RailDotSize)
-                            .clip(RailDotShape)
-                            .then(
-                                if (active) {
-                                    Modifier
-                                        .background(SecondaryContainer)
-                                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            .clickable { onSelect(s.id) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = sessionInitial(s.title),
-                            fontFamily = Opcode42Mono,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (active) OnSurface else OnSurfaceVariant,
-                        )
-                    }
-                    if (busy) {
-                        Box(
-                            Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 3.dp, y = (-3).dp)
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(SurfaceContainerLow)
-                                .border(1.dp, Hairline, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Spinner(size = 10.dp, color = Secondary)
-                        }
-                    }
-                }
-            }
-        }
-        HorizontalDivider(color = Hairline, thickness = 1.dp)
-        Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
-        }
-    }
+private fun Modifier.railWidth(progress: () -> Float): Modifier = layout { measurable, constraints ->
+    val w = lerp(60.dp, 220.dp, progress().coerceIn(0f, 1f)).roundToPx()
+    val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+    layout(w, placeable.height) { placeable.place(0, 0) }
 }
-
-/** A 38dp rounded-square nav button for the collapsed rail (Conversation / Tasks). */
-@Composable
-private fun RailIconDot(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    active: Boolean,
-    onClick: () -> Unit,
-) {
-    val accent = Secondary
-    Box(
-        Modifier
-            .size(RailDotSize)
-            .clip(RailDotShape)
-            .then(
-                if (active) {
-                    Modifier
-                        .background(SecondaryContainer)
-                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
-                } else {
-                    Modifier
-                },
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = label,
-            tint = if (active) accent else OnSurfaceVariant,
-            modifier = Modifier.size(17.dp),
-        )
-    }
-}
-
-private fun sessionInitial(title: String?): String =
-    title?.trim()?.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
 
 // ─── Left nav rail pane ────────────────────────────────────────────────────────
 
@@ -525,62 +399,91 @@ internal fun NavRailPane(
     onReplyQuestion: (String, String) -> Unit,
     onSkipQuestion: (String) -> Unit,
     onCollapse: () -> Unit,
+    onExpand: () -> Unit,
+    progress: () -> Float,
     modifier: Modifier = Modifier,
 ) {
+    // Flip the header's interactivity once at the midpoint (alpha=0 still hit-tests).
+    val open by remember { derivedStateOf { progress() > 0.5f } }
     Column(modifier.fillMaxSize().background(SurfaceContainerLow)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .padding(start = 14.dp, end = 6.dp),
-        ) {
-            Text(
-                text = "opcode42",
-                fontFamily = Opcode42Mono,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                letterSpacing = 1.sp,
-                color = OnSurface,
-                modifier = Modifier.weight(1f),
-            )
-            // Subtle bordered "New" (design): surface-container-high fill, hairline border,
-            // blue plus — not a filled tonal button.
-            Surface(
-                onClick = onNewSession,
-                shape = RoundedCornerShape(6.dp),
-                color = SurfaceContainerHigh,
-                border = BorderStroke(1.dp, Hairline),
+        // Header: crossfade the open header (wordmark + New + collapse) with a centered expand
+        // chevron. The open chrome interacts only when `open`, the chevron only when collapsed.
+        Box(Modifier.fillMaxWidth().height(54.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // Front-load the fade (gone by progress≈0.4) so the wordmark + New never
+                    // visibly squeeze as the rail narrows.
+                    .graphicsLayer { alpha = ((progress() - 0.4f) * 2.5f).coerceIn(0f, 1f) }
+                    .padding(start = 14.dp, end = 6.dp),
             ) {
+                Text(
+                    text = "opcode42",
+                    fontFamily = Opcode42Mono,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    letterSpacing = 1.sp,
+                    color = OnSurface,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                // Subtle bordered "New" (design): surface-container-high fill, hairline border,
+                // blue plus. Interactive only when the rail is open (+New is open-only).
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(SurfaceContainerHigh)
+                        .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(6.dp))
+                        .then(if (open) Modifier.clickable(onClick = onNewSession) else Modifier)
+                        .padding(horizontal = 9.dp, vertical = 6.dp),
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("New", fontSize = 12.5.sp, color = OnSurface)
                 }
+                Spacer(Modifier.width(2.dp))
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .then(if (open) Modifier.clickable(onClick = onCollapse) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Collapse navigation",
+                        tint = OnSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
-            Spacer(Modifier.width(2.dp))
-            IconButton(onClick = onCollapse, modifier = Modifier.size(32.dp)) {
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(40.dp)
+                    .graphicsLayer { alpha = 1f - progress() }
+                    .then(if (!open) Modifier.clickable(onClick = onExpand) else Modifier),
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                    contentDescription = "Collapse navigation",
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Expand navigation",
                     tint = OnSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
         HorizontalDivider(color = Hairline, thickness = 1.dp)
 
         // Conversation / Tasks nav segment — Conversation is the current view (active);
-        // Tasks opens the tasks board.
+        // Tasks opens the tasks board. Labels fade + icons glide to center as the rail collapses.
         Column(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            NavRow(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, onClick = {})
-            NavRow(Icons.AutoMirrored.Filled.FormatListBulleted, "Tasks", active = false, onClick = onOpenTasksBoard)
+            NavRow(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, progress = progress, onClick = {})
+            NavRow(Icons.AutoMirrored.Filled.FormatListBulleted, "Tasks", active = false, progress = progress, onClick = onOpenTasksBoard)
         }
         HorizontalDivider(color = Hairline, thickness = 1.dp, modifier = Modifier.padding(horizontal = 10.dp))
 
@@ -599,6 +502,8 @@ internal fun NavRailPane(
             onSkipQuestion = onSkipQuestion,
             compact = true,
             containerColor = SurfaceContainerLow,
+            progress = progress,
+            onExpand = onExpand,
             modifier = Modifier.weight(1f),
         )
 
@@ -617,31 +522,29 @@ internal fun NavRailPane(
                         .background(Tertiary),
                 )
                 Spacer(Modifier.width(6.dp))
-                val home = System.getProperty("user.home")?.takeIf { it.isNotEmpty() } ?: ""
-                val displayDir = if (home.isNotEmpty() && activeDirectory.startsWith(home)) {
-                    "~" + activeDirectory.removePrefix(home)
-                } else {
-                    activeDirectory
-                }
+                // `~`-relative display of the daemon-host path; fades out as the rail collapses.
                 Text(
-                    text = displayDir,
+                    text = homeRelativeDir(activeDirectory),
                     fontFamily = Opcode42Mono,
                     fontSize = 11.sp,
                     color = OnSurfaceFaint,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.graphicsLayer { alpha = progress() },
                 )
             }
         }
     }
 }
 
-/** A full-width Conversation / Tasks nav row in the open rail. */
+/** A full-width Conversation / Tasks nav row; the label fades and the icon glides to centered
+ *  in the 60dp band as the rail collapses ([progress] 1f→0f). */
 @Composable
 private fun NavRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     active: Boolean,
+    progress: () -> Float,
     onClick: () -> Unit,
 ) {
     val accent = Secondary
@@ -661,6 +564,10 @@ private fun NavRow(
                 },
             )
             .clickable(onClick = onClick)
+            // Glide the content right so the 16dp icon ends centered in the 60dp band.
+            .offset {
+                IntOffset(androidx.compose.ui.util.lerp(12.dp.toPx(), 0f, progress()).roundToInt(), 0)
+            }
             .padding(horizontal = 10.dp),
     ) {
         Icon(
@@ -675,6 +582,9 @@ private fun NavRow(
             fontSize = 13.5.sp,
             color = if (active) OnSurface else OnSurfaceVariant,
             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.graphicsLayer { alpha = progress() },
         )
     }
 }

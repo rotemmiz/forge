@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -86,6 +88,10 @@ fun SessionBrowser(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     containerColor: Color = Surface,
+    // Rail collapse animation: 1f = open, 0f = collapsed. Read only in draw/layout lambdas so the
+    // per-frame float never recomposes. [onExpand] re-opens the rail when the collapsed search is tapped.
+    progress: () -> Float = { 1f },
+    onExpand: () -> Unit = {},
 ) {
     var renameTarget by remember { mutableStateOf<Session?>(null) }
     val hPad = if (compact) 8.dp else 12.dp
@@ -111,6 +117,7 @@ fun SessionBrowser(
             onReply = { answer -> question?.let { onReplyQuestion(it.id, answer) } },
             onSkip = { question?.let { onSkipQuestion(it.id) } },
             compact = compact,
+            progress = progress,
         )
     }
 
@@ -119,6 +126,8 @@ fun SessionBrowser(
             query = uiState.query,
             onQueryChange = onQueryChange,
             compact = compact,
+            progress = progress,
+            onExpand = onExpand,
             modifier = Modifier.padding(horizontal = hPad, vertical = 6.dp),
         )
 
@@ -146,7 +155,7 @@ fun SessionBrowser(
             LazyColumn(Modifier.fillMaxSize()) {
                 if (compact) {
                     // Rail: a single purple SESSIONS header over a flat, recency-ordered list.
-                    stickyHeader(key = "h:SESSIONS") { SectionHeader("SESSIONS", hPad, containerColor) }
+                    stickyHeader(key = "h:SESSIONS") { SectionHeader("SESSIONS", hPad, containerColor, progress) }
                     items(uiState.groups.flatMap { it.sessions }, key = { it.id }) { rowContent(it) }
                 } else {
                     uiState.groups.forEach { group ->
@@ -176,6 +185,10 @@ fun SessionBrowser(
  * The design's compact boxed search — a single-line field (surface-container fill, hairline
  * border) rather than a tall M3 outlined field, so it stays 38/44dp and the placeholder never
  * wraps in the narrow rail.
+ *
+ * In the rail it **stays put** and retracts with [progress]: the bordered box narrows with the
+ * rail (it's `fillMaxWidth`) to a ~38dp search "dot", the leading search icon stays fully visible,
+ * and the placeholder/value/clear fade out. While collapsed, tapping it re-opens the rail ([onExpand]).
  */
 @Composable
 private fun SessionSearchField(
@@ -183,9 +196,13 @@ private fun SessionSearchField(
     onQueryChange: (String) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier,
+    progress: () -> Float = { 1f },
+    onExpand: () -> Unit = {},
 ) {
     val shape = RoundedCornerShape(if (compact) 8.dp else 14.dp)
     val textSize = if (compact) 13.sp else 14.sp
+    // Below the midpoint the field is a non-interactive search dot whose tap re-opens the rail.
+    val open by remember { derivedStateOf { progress() > 0.5f } }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -194,6 +211,7 @@ private fun SessionSearchField(
             .clip(shape)
             .background(SurfaceContainer)
             .border(1.dp, Hairline, shape)
+            .then(if (!open) Modifier.clickable(onClick = onExpand) else Modifier)
             .padding(horizontal = 11.dp),
     ) {
         Icon(
@@ -203,26 +221,33 @@ private fun SessionSearchField(
             modifier = Modifier.size(if (compact) 16.dp else 18.dp),
         )
         Spacer(Modifier.width(9.dp))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+        Box(
+            Modifier.weight(1f).graphicsLayer { alpha = progress() },
+            contentAlignment = Alignment.CenterStart,
+        ) {
             if (query.isEmpty()) {
                 Text("Search sessions…", color = OnSurfaceGhost, fontSize = textSize, maxLines = 1)
             }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle = TextStyle(color = OnSurface, fontSize = textSize),
-                cursorBrush = SolidColor(Primary),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // The input is inert when collapsed (taps go to the box's onExpand instead).
+            if (open) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    textStyle = TextStyle(color = OnSurface, fontSize = textSize),
+                    cursorBrush = SolidColor(Primary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
-        if (query.isNotEmpty()) {
+        if (query.isNotEmpty() && open) {
             Icon(
                 Icons.Default.Close,
                 contentDescription = "Clear search",
                 tint = OnSurfaceFaint,
                 modifier = Modifier
                     .size(18.dp)
+                    .graphicsLayer { alpha = progress() }
                     .clickable { onQueryChange("") },
             )
         }
@@ -259,14 +284,21 @@ private fun FilterTabs(
 }
 
 @Composable
-private fun SectionHeader(text: String, hPad: androidx.compose.ui.unit.Dp, bg: Color) {
+private fun SectionHeader(
+    text: String,
+    hPad: androidx.compose.ui.unit.Dp,
+    bg: Color,
+    progress: () -> Float = { 1f },
+) {
     // Purple uppercase sans — the design's one section-header voice (rail SESSIONS, date
     // groups, the right info panel, the phone list label all share it). [bg] matches the
-    // surface behind it so rows scroll cleanly under the sticky header.
+    // surface behind it so rows scroll cleanly under the sticky header. In the rail it fades
+    // out (height kept) as the rail collapses, so rows below keep their Y.
     Text(
         text = text.uppercase(),
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer { alpha = progress() }
             .background(bg)
             .padding(start = hPad + 4.dp, end = hPad + 4.dp, top = 12.dp, bottom = 6.dp),
         fontSize = 11.sp,

@@ -195,7 +195,11 @@ func (c *Client) Cleanup(extraDirs ...string) {
 			want[d] = true
 		}
 	}
-	req, err := c.buildRequest(context.Background(), http.MethodGet, "/session", ReqOpts{})
+	// Bound the whole teardown so a hung daemon can't stall the run (the live client's
+	// HTTP timeout is minutes); cleanup is best-effort and not worth waiting on.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := c.buildRequest(ctx, http.MethodGet, "/session", ReqOpts{})
 	if err != nil {
 		return
 	}
@@ -216,11 +220,12 @@ func (c *Client) Cleanup(extraDirs ...string) {
 		if s.ID == "" || !want[s.Dir] {
 			continue
 		}
-		dreq, err := c.buildRequest(context.Background(), http.MethodDelete, "/session/"+s.ID, ReqOpts{})
+		dreq, err := c.buildRequest(ctx, http.MethodDelete, "/session/"+s.ID, ReqOpts{})
 		if err != nil {
 			continue
 		}
 		if dresp, derr := c.HTTP.Do(dreq); derr == nil {
+			_, _ = io.Copy(io.Discard, dresp.Body) // drain so the connection can be reused
 			_ = dresp.Body.Close()
 		}
 	}

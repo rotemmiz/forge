@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Difference
+import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
@@ -29,6 +31,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.TextStyle
@@ -263,9 +267,22 @@ fun AdaptiveChatScreen(
             )
         }
 
-    val aggregatedDiffs = remember(chatUiState.diffs) {
-        chatUiState.diffs.values
-            .flatten()
+    val aggregatedDiffs = remember(
+        chatUiState.messages,
+        chatUiState.parts,
+        chatUiState.diffs,
+        chatUiState.session?.directory,
+    ) {
+        val dir = chatUiState.session?.directory
+        // Mirror what the conversation shows: real snapshot diffs where loaded, else the
+        // synthetic diff rebuilt from edit-tool inputs — so an edit that's already visible
+        // in the stream (snapshot diff not yet/ever provided) still lands in CHANGES.
+        sessionFileDiffs(chatUiState.messages, chatUiState.parts, chatUiState.diffs)
+            // Relativize to the session's working dir first: edit/VCS paths carry no
+            // relativity guarantee, so an absolute path would otherwise truncate to its
+            // (useless) prefix under end-ellipsis — and relativizing also merges any
+            // absolute/relative duplicates of the same file before grouping.
+            .map { it.copy(file = relativeToDir(it.file, dir)) }
             .groupBy { it.file }
             .map { (_, entries) ->
                 entries.reduce { acc, diff ->
@@ -684,47 +701,99 @@ internal fun SessionInfoPanel(
                     letterSpacing = 0.6.sp,
                     fontWeight = FontWeight.Bold,
                     color = HeaderPurple,
-                    modifier = Modifier.weight(1f),
                 )
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = "${diffs.size} files",
                     fontSize = 11.5.sp,
                     color = OnSurfaceFaint,
                     fontFamily = Opcode42Mono,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Outlined.Difference,
+                    contentDescription = null,
+                    tint = OnSurfaceFaint,
+                    modifier = Modifier.size(15.dp),
                 )
             }
-            diffs.forEach { diff ->
+            // Hoist the amber accent out of the per-row draw scope (it's a @Composable token).
+            val accent = Secondary
+            diffs.forEachIndexed { index, diff ->
+                // Accent the most-changed file (first — diffs are churn-sorted) with the
+                // amber active-row treatment shared with the sessions rail. Only when it
+                // stands out: skip a lone row, and a 0/0 (status-only) top row.
+                val active = index == 0 && diffs.size > 1 && (diff.additions + diff.deletions) > 0
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (active) {
+                                Modifier
+                                    .background(SecondaryContainer)
+                                    .drawBehind {
+                                        drawRect(accent, size = Size(2.5.dp.toPx(), size.height))
+                                    }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
                 ) {
-                    Text(
-                        text = diff.file?.substringAfterLast('/') ?: "unknown",
-                        fontFamily = Opcode42Mono,
-                        fontSize = 12.5.sp,
-                        color = OnSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                    Icon(
+                        Icons.Outlined.InsertDriveFile,
+                        contentDescription = null,
+                        tint = if (active) Secondary else OnSurfaceFaint,
+                        modifier = Modifier.size(13.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    if (diff.additions > 0) {
+                    // Pin the filename and let only the directory prefix ellipsize: this
+                    // Compose BOM has no start/middle ellipsis, so a single full-path Text
+                    // would clip the filename (the useful tail) on a deep path.
+                    val path = diff.file?.takeIf { it.isNotBlank() } ?: "unknown"
+                    val cut = path.lastIndexOf('/')
+                    val pathColor = if (active) Secondary else Tertiary
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (cut >= 0) {
+                            Text(
+                                text = path.substring(0, cut + 1),
+                                fontFamily = Opcode42Mono,
+                                fontSize = 12.5.sp,
+                                color = pathColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
                         Text(
-                            text = "+${diff.additions}",
+                            text = path.substring(cut + 1),
                             fontFamily = Opcode42Mono,
                             fontSize = 12.5.sp,
-                            color = Tertiary,
-                        )
-                        Spacer(Modifier.width(3.dp))
-                    }
-                    if (diff.deletions > 0) {
-                        Text(
-                            text = "-${diff.deletions}",
-                            fontFamily = Opcode42Mono,
-                            fontSize = 12.5.sp,
-                            color = Error,
+                            color = pathColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(6.dp))
+                    // Always show both counts; a zero stays dim rather than vanishing,
+                    // so the +adds / −dels columns line up down the list.
+                    Text(
+                        text = "+${diff.additions}",
+                        fontFamily = Opcode42Mono,
+                        fontSize = 12.5.sp,
+                        color = if (diff.additions > 0) Tertiary else OnSurfaceFaint,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "-${diff.deletions}",
+                        fontFamily = Opcode42Mono,
+                        fontSize = 12.5.sp,
+                        color = if (diff.deletions > 0) Error else OnSurfaceFaint,
+                    )
                 }
             }
             Spacer(Modifier.height(3.dp))
@@ -845,6 +914,17 @@ private fun InfoRow(key: String, value: String) {
             modifier = Modifier.weight(1f),
         )
     }
+}
+
+/** Collapse a diff path to be relative to the session's working dir (a no-op if it
+ *  already is, or if the dir is unknown), so the filename — not a long absolute prefix —
+ *  is what survives in the narrow CHANGES list. */
+private fun relativeToDir(file: String?, dir: String?): String? {
+    if (file == null || dir.isNullOrEmpty()) return file
+    // Match on the path boundary so a sibling sharing a prefix (dir `/a/project`,
+    // file `/a/projectX/y`) isn't mistaken for a child.
+    val base = dir.removeSuffix("/")
+    return if (file.startsWith("$base/")) file.removePrefix("$base/") else file
 }
 
 private fun formatTokens(n: Long): String = when {

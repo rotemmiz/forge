@@ -2,12 +2,8 @@ package dev.opcode42.app.ui
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -16,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
@@ -301,13 +298,11 @@ fun AdaptiveChatScreen(
             ) {
                 centerPane(Modifier.fillMaxSize())
             }
-            // Wider windows: the menu pushes the chat aside (inline), closed by default.
+            // Wider windows: the menu pushes the chat aside (inline). Open = the full
+            // 220dp rail; collapsed = a narrow 60dp icon band (sessions + running status
+            // stay reachable) rather than vanishing entirely.
             LeftRailMode.InlinePush -> Row(Modifier.fillMaxSize()) {
-                AnimatedVisibility(
-                    visible = railOpen,
-                    enter = slideInHorizontally { -it } + expandHorizontally(expandFrom = Alignment.Start),
-                    exit = slideOutHorizontally { -it } + shrinkHorizontally(shrinkTowards = Alignment.Start),
-                ) {
+                if (railOpen) {
                     Row(Modifier.fillMaxHeight()) {
                         // Selecting a session keeps the persistent triptych rail open (only a
                         // manually-opened Medium rail collapses); the chat content swaps in
@@ -317,14 +312,101 @@ fun AdaptiveChatScreen(
                             { if (!layout.railPersistent) railOpen = false },
                             { railOpen = false },
                         )
-                        Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                     }
+                } else {
+                    CollapsedRail(
+                        sessions = sessionListState.groups.flatMap { it.sessions },
+                        statuses = sessionListState.statuses,
+                        activeId = sessionId,
+                        onExpand = { railOpen = true },
+                        onNew = onNewSession,
+                        onSelect = { id -> onNavigateToSession(id) },
+                    )
                 }
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                 centerPane(Modifier.weight(1f))
             }
         }
 
         SnackbarHost(sessionSnackbar, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+// ─── Collapsed icon rail (narrow band) ─────────────────────────────────────────
+
+/**
+ * The 60dp band the inline rail collapses to: an expand affordance, New, and the
+ * sessions as initial-avatars so switching + running status stay reachable without
+ * opening the full rail. Active = amber fill; a busy session shows a spinner badge.
+ */
+@Composable
+private fun CollapsedRail(
+    sessions: List<Session>,
+    statuses: Map<String, String>,
+    activeId: String,
+    onExpand: () -> Unit,
+    onNew: () -> Unit,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.width(60.dp).fillMaxHeight().background(Surface),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(8.dp))
+        IconButton(onClick = onExpand, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Default.Menu, contentDescription = "Expand navigation", tint = OnSurface, modifier = Modifier.size(20.dp))
+        }
+        IconButton(onClick = onNew, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Default.Add, contentDescription = "New session", tint = Primary, modifier = Modifier.size(20.dp))
+        }
+        HorizontalDivider(color = Hairline, modifier = Modifier.width(28.dp).padding(vertical = 6.dp))
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sessions.forEach { s ->
+                val active = s.id == activeId
+                val busy = statuses[s.id].let { it != null && it != "idle" }
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (active) Secondary else SurfaceContainerHigh)
+                            .clickable { onSelect(s.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = sessionInitials(s.title),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (active) OnSecondary else OnSurfaceVariant,
+                        )
+                    }
+                    if (busy) {
+                        Spinner(
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                            size = 13.dp,
+                            color = Secondary,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+private fun sessionInitials(title: String?): String {
+    val t = title?.trim().orEmpty()
+    if (t.isEmpty()) return "?"
+    val words = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
+    return if (words.size >= 2) {
+        "${words[0].first()}${words[1].first()}".uppercase()
+    } else {
+        t.take(2).uppercase()
     }
 }
 

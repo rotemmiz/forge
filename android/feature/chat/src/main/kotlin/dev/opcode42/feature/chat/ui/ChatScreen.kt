@@ -74,12 +74,11 @@ fun ChatScreen(
     /** True for the lazy "new session" draft — no server session exists yet. */
     isDraft: Boolean = false,
     /**
-     * Multi-pane host slots: when [railContent] is non-null the chat hosts the whole
-     * triptych itself — the rail + (optional) [infoContent] sidebar render inside the
-     * Scaffold content, below the top bar, so the top bar spans the full width. The
-     * composer then lives under the stream column (not the Scaffold bottom bar).
+     * Multi-pane sidebar slot: when [infoContent] is non-null the chat hosts the context
+     * sidebar inside its own Scaffold content, so the top bar spans the chat area (stream
+     * + sidebar) and the composer lives under the stream column only. The sessions rail
+     * stays OUTSIDE the chat (beside it), so the top bar does not extend over the rail.
      */
-    railContent: (@Composable () -> Unit)? = null,
     infoContent: (@Composable () -> Unit)? = null,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
@@ -183,8 +182,8 @@ fun ChatScreen(
     val displayProvider = displayModelRef?.providerID
 
     // The composer (phone status strip + prompt input). Hosted in the Scaffold bottom
-    // bar single-pane; in multi-pane it moves under the stream column so the top bar
-    // can span the full width across rail · stream · sidebar.
+    // bar single-pane; in multi-pane it lives under the stream column so the top bar can
+    // span the chat area (stream + sidebar) and the composer never runs under the sidebar.
     val composerBar: @Composable () -> Unit = {
         Column(
             Modifier
@@ -381,22 +380,20 @@ fun ChatScreen(
                 HorizontalDivider(color = Hairline, thickness = 1.dp)
             }
         },
-        // Single-pane: the composer is the Scaffold bottom bar (full window width).
-        // Multi-pane: the chat hosts the panes, so the composer moves under the stream
-        // column (see content below) and the top bar spans the full width.
-        bottomBar = { if (railContent == null) composerBar() },
+        // Single-pane: the composer is the Scaffold bottom bar. Multi-pane: it lives under
+        // the stream column (see content below) so it never runs under the sidebar — and,
+        // keyed on isMultiPane (not infoContent), it never re-parents when the info panel
+        // is toggled, which would otherwise drop the in-progress prompt.
+        bottomBar = { if (!isMultiPane) composerBar() },
     ) { padding ->
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // Multi-pane host: rail · (stream + composer) · sidebar, all UNDER the
-            // full-width top bar. Single-pane: this Row holds just the stream column.
-            railContent?.let {
-                it()
-                Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
-            }
+            // Multi-pane: (stream + composer) · sidebar, UNDER a top bar that spans the
+            // chat area only (the rail lives outside, beside the chat, so the bar stops at
+            // the rail's edge). Single-pane: this Row holds just the stream column.
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
@@ -479,14 +476,14 @@ fun ChatScreen(
                         )
                     }
                 }
-                // Multi-pane: composer sits under the stream column (not the bottom bar).
-                if (railContent != null) composerBar()
+                // Multi-pane → composer sits under the stream column (not the bottom bar)
+                // so it never runs under the sidebar. Keyed on isMultiPane (not infoContent)
+                // so toggling the info panel doesn't re-parent + reset the composer.
+                if (isMultiPane) composerBar()
             }
-            if (railContent != null) {
-                infoContent?.let {
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
-                    it()
-                }
+            infoContent?.let {
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
+                it()
             }
         }
 

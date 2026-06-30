@@ -45,8 +45,19 @@ fun AsteriskMark(
     size: Dp = 16.dp,
     color: Color = LocalContentColor.current,
     arcColor: Color = OnSurfaceFaint,
+    /**
+     * Arm stroke in the 160-unit design space. Defaults to the refined 6 of the
+     * static G15² mark; the loader (and any small render) wants a heavier stroke so
+     * the dual-arc doesn't thin to a sub-pixel sliver — past 7 it switches to the
+     * "heavy" form (bigger ring + core punch), matching the design's small-loader.
+     */
+    strokeWidth: Float = 6f,
     spin: Boolean = false,
 ) {
+    val heavy = strokeWidth > 7f
+    val ringR = if (heavy) 15f else 12f
+    val punchR = if (heavy) 18f else 15f
+    val arcStrokeWidth = strokeWidth * 2f / 3f
     // The spinning ring's angle is held as State and read *inside* the draw lambda
     // (as late as possible), so an animation frame invalidates only the draw phase —
     // not composition. Several Spinners on screen at 60fps then cost only redraws.
@@ -68,11 +79,11 @@ fun AsteriskMark(
     Canvas(modifier.size(size)) {
         val s = this.size.minDimension / 160f
         val center = Offset(80f * s, 80f * s)
-        val armStroke = Stroke(width = 6f * s)
-        val arcStroke = Stroke(width = 4f * s, cap = StrokeCap.Round)
+        val armStroke = Stroke(width = strokeWidth * s)
+        val arcStroke = Stroke(width = arcStrokeWidth * s, cap = StrokeCap.Round)
 
-        // Three arms, with the core punched hollow (clip everything OUTSIDE the r=15 circle).
-        val hole = Path().apply { addOval(Rect(center = center, radius = 15f * s)) }
+        // Three arms, with the core punched hollow (clip everything OUTSIDE the punch circle).
+        val hole = Path().apply { addOval(Rect(center = center, radius = punchR * s)) }
         clipPath(hole, clipOp = ClipOp.Difference) {
             for (deg in listOf(0f, 60f, 120f)) {
                 rotate(deg, pivot = center) {
@@ -87,9 +98,9 @@ fun AsteriskMark(
             }
         }
 
-        // Dual-arc ring in the hollow (r=12); only this rotates for the loader.
-        val ringTopLeft = Offset(68f * s, 68f * s)
-        val ringSize = Size(24f * s, 24f * s)
+        // Dual-arc ring in the hollow; only this rotates for the loader.
+        val ringTopLeft = Offset((80f - ringR) * s, (80f - ringR) * s)
+        val ringSize = Size(2f * ringR * s, 2f * ringR * s)
         rotate(angleState?.value ?: 0f, pivot = center) {
             drawArc(
                 color = color,

@@ -1,6 +1,8 @@
 package dev.opcode42.feature.chat.ui
 
 import dev.opcode42.core.design.theme.*
+import dev.opcode42.core.design.brand.AsteriskMark
+import dev.opcode42.core.design.brand.Spinner
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -224,11 +226,7 @@ fun ChatScreen(
                             )
                             if (uiState.sessionStatus == "busy") {
                                 Spacer(Modifier.width(8.dp))
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(12.dp),
-                                    strokeWidth = 1.5.dp,
-                                    color = Secondary,
-                                )
+                                Spinner(size = 12.dp, color = Secondary)
                             }
                         }
                         uiState.session?.directory?.let { dir ->
@@ -415,17 +413,27 @@ fun ChatScreen(
 
             // Initial message load: entering a session before anything has streamed in.
             if (uiState.isLoading && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center))
+                Spinner(
+                    modifier = Modifier.align(Alignment.Center),
+                    size = 32.dp,
+                    color = Secondary,
+                )
             }
 
-            // Draft placeholder: empty composer-only screen until the first prompt creates the session.
-            if (isDraft && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
-                Text(
-                    text = "Type a message to start a new session.",
-                    fontSize = 13.sp,
-                    color = OnSurfaceFaint,
+            // New-session splash: the dual-arc mark + prompt until the first message lands.
+            if (isDraft && !uiState.isLoading && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                )
+                ) {
+                    AsteriskMark(size = 132.dp, color = OnSurface)
+                    Spacer(Modifier.height(22.dp))
+                    Text(
+                        text = "What should we build?",
+                        fontSize = 14.sp,
+                        color = OnSurfaceVariant,
+                    )
+                }
             }
 
             // Todos dock — only in single/medium pane; moves to info panel in expanded.

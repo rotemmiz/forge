@@ -49,6 +49,10 @@ data class ChatUiState(
     /** Live context-window occupancy: the most recent assistant turn's token usage
      *  (NOT the session's cumulative total, which grows unbounded across turns). */
     val contextTokens: TokenUsage? = null,
+    /** Real context-window size of the model that produced [contextTokens], from the
+     *  models.dev catalog via GET /provider (opencode `Model.limit.context`). null when
+     *  unknown — the gauge then shows the token count without a denominator/percentage. */
+    val contextLimit: Int? = null,
     val isLoading: Boolean = false,
     val isSending: Boolean = false,
 )
@@ -81,16 +85,29 @@ class ChatViewModel @Inject constructor(
     /** Current git branch of the session directory; fetched once when the directory is known. */
     private val _branch = MutableStateFlow<String?>(null)
 
+    /** Providers + their models for the picker (loaded once); also feeds the context
+     *  gauge's real window size. Declared above [uiState] because the combine reads it. */
+    private val _providers = MutableStateFlow<List<ProviderInfo>>(emptyList())
+    val providers: StateFlow<List<ProviderInfo>> = _providers.asStateFlow()
+
     /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
     private val _events = Channel<ChatEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
     val uiState: StateFlow<ChatUiState> =
-        combine(chatRepo.observe(sessionId), _isSending, _isLoading, _branch) { snap, sending, loading, branch ->
+        combine(chatRepo.observe(sessionId), _isSending, _isLoading, _branch, _providers) { snap, sending, loading, branch, providers ->
             val messages = snap.messages
             // Status-strip context comes from the most recent assistant turn that
             // carries a model/agent (the live "what's running" state).
             val lastModelled = messages.lastOrNull { it.role == "assistant" && it.modelID != null }
+            // Context = the latest assistant turn that has produced output, matching
+            // opencode's gauge-selection predicate (sidebar/context.tsx:20,
+            // prompt/index.tsx:262: `tokens.output > 0`). The daemon emits a zero-valued
+            // `tokens` block at turn START, so keying on output keeps the gauge on the
+            // previous turn's value until the new turn actually produces tokens.
+            val contextMsg = messages.lastOrNull {
+                it.role == "assistant" && (it.tokens?.output ?: 0.0) > 0.0
+            }
             ChatUiState(
                 session = snap.session,
                 messages = messages,
@@ -107,13 +124,14 @@ class ChatViewModel @Inject constructor(
                 modelID = lastModelled?.modelID,
                 providerID = lastModelled?.providerID,
                 branch = branch,
-                // Context = the latest assistant turn whose tokens are populated.
-                // The daemon emits a zero-valued `tokens` block at turn START (before
-                // counts are known), so we require a non-zero footprint — otherwise the
-                // gauge would snap to 0% for the whole duration of each in-flight turn.
-                contextTokens = messages.lastOrNull {
-                    it.role == "assistant" && (it.tokens?.contextFootprint ?: 0L) > 0L
-                }?.tokens,
+                contextTokens = contextMsg?.tokens,
+                // Real window size of THAT turn's model, looked up in the providers
+                // catalog by the message's provider/model (opencode sidebar/context.tsx:30,33).
+                // Raw limit.context; null when the model isn't in the catalog — the gauge
+                // then drops the denominator rather than inventing one.
+                contextLimit = contextMsg?.let { m ->
+                    providers.find { it.id == m.providerID }?.models?.get(m.modelID)?.limit?.context
+                }?.takeIf { it > 0.0 }?.toInt(),
                 isLoading = loading,
                 isSending = sending,
             )
@@ -124,10 +142,6 @@ class ChatViewModel @Inject constructor(
     /** Slash commands available for this session's directory (loaded once). */
     private val _commands = MutableStateFlow<List<CommandInfo>>(emptyList())
     val commands: StateFlow<List<CommandInfo>> = _commands.asStateFlow()
-
-    /** Providers + their models for the picker (loaded once). */
-    private val _providers = MutableStateFlow<List<ProviderInfo>>(emptyList())
-    val providers: StateFlow<List<ProviderInfo>> = _providers.asStateFlow()
 
     /** Selectable agents (primary/all modes) for the picker (loaded once). */
     private val _agents = MutableStateFlow<List<AgentInfo>>(emptyList())

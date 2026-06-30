@@ -25,6 +25,9 @@ fun Spinner(
         size = size,
         color = color,
         arcColor = arcColor,
+        // Heavier than the static mark so the spinning dual-arc stays legible at the
+        // small sizes loaders run at (12–16dp); trips the "heavy" ring/punch form.
+        strokeWidth = 10f,
         spin = true,
     )
 }

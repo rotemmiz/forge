@@ -9,10 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -26,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.opcode42.core.design.brand.Spinner
+import dev.opcode42.core.design.theme.Secondary
 import dev.opcode42.core.model.PermissionRequest
 import dev.opcode42.core.model.QuestionRequest
 
@@ -44,11 +44,7 @@ fun isSessionBusy(status: String?): Boolean = status != null && status != "idle"
 @Composable
 fun SessionStatusSpinner(status: String?, modifier: Modifier = Modifier) {
     if (isSessionBusy(status)) {
-        CircularProgressIndicator(
-            modifier = modifier.size(12.dp),
-            strokeWidth = 1.5.dp,
-            color = MaterialTheme.colorScheme.secondary,
-        )
+        Spinner(modifier = modifier, size = 12.dp, color = Secondary)
     }
 }
 

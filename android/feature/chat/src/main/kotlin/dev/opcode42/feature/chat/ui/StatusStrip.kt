@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.sp
 import dev.opcode42.core.model.TokenUsage
 
 /**
- * Compact 32dp mono status strip above the composer (design/android §4).
+ * 40dp status strip above the composer (mobile.md §1) on an elevated surface.
  * The TUI's bottom status bar, compacted: mode chip · model · provider · tokens.
  */
 @Composable
@@ -41,8 +41,8 @@ fun StatusStrip(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier
             .fillMaxWidth()
-            .height(32.dp)
-            .background(Surface)
+            .height(40.dp)
+            .background(SurfaceContainerHigh)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp),
     ) {

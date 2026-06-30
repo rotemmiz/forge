@@ -1,5 +1,6 @@
 package dev.opcode42.feature.chat.ui
 
+import dev.opcode42.core.design.brand.Spinner
 import dev.opcode42.core.design.theme.*
 
 import androidx.compose.foundation.background
@@ -19,7 +20,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -133,11 +133,7 @@ fun SubAgentBlock(part: ToolPart, modifier: Modifier = Modifier) {
 @Composable
 private fun SubAgentStatus(part: ToolPart) {
     when (part.state) {
-        is ToolStateRunning -> CircularProgressIndicator(
-            modifier = Modifier.size(13.dp),
-            strokeWidth = 1.5.dp,
-            color = Secondary,
-        )
+        is ToolStateRunning -> Spinner(size = 13.dp, color = Secondary)
         is ToolStateCompleted -> Icon(
             Icons.Default.CheckCircle,
             contentDescription = "done",

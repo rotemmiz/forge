@@ -35,6 +35,9 @@ data class ChatUiState(
     val messages: List<Message> = emptyList(),
     val parts: Map<String, List<Part>> = emptyMap(),
     val diffs: Map<String, List<SnapshotFileDiff>> = emptyMap(),
+    /** Working-tree changes (the daemon's `git status`) for the session's directory — the
+     *  net changed-files the CHANGES pane shows, refreshed when the session goes idle. */
+    val changedFiles: List<SnapshotFileDiff> = emptyList(),
     val optimisticMessages: List<OptimisticMessage> = emptyList(),
     val pendingPermissions: List<PermissionRequest> = emptyList(),
     val pendingQuestions: List<QuestionRequest> = emptyList(),
@@ -90,12 +93,20 @@ class ChatViewModel @Inject constructor(
     private val _providers = MutableStateFlow<List<ProviderInfo>>(emptyList())
     val providers: StateFlow<List<ProviderInfo>> = _providers.asStateFlow()
 
+    /** Working-tree changes (`git status`) for the session directory; refreshed on idle. */
+    private val _changedFiles = MutableStateFlow<List<SnapshotFileDiff>>(emptyList())
+
     /** One-shot events (snackbars). BUFFERED + trySend so emitting never suspends or blocks. */
     private val _events = Channel<ChatEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
     val uiState: StateFlow<ChatUiState> =
-        combine(chatRepo.observe(sessionId), _isSending, _isLoading, _branch, _providers) { snap, sending, loading, branch, providers ->
+        // Six inputs, but `combine` is only typed up to five — pair the last two (both plain
+        // state flows) into one and destructure them in the lambda.
+        combine(
+            chatRepo.observe(sessionId), _isSending, _isLoading, _branch,
+            combine(_providers, _changedFiles) { providers, changedFiles -> providers to changedFiles },
+        ) { snap, sending, loading, branch, (providers, changedFiles) ->
             val messages = snap.messages
             // Status-strip context comes from the most recent assistant turn that
             // carries a model/agent (the live "what's running" state).
@@ -113,6 +124,7 @@ class ChatViewModel @Inject constructor(
                 messages = messages,
                 parts = snap.parts,
                 diffs = snap.diffs,
+                changedFiles = changedFiles,
                 optimisticMessages = snap.optimistic,
                 pendingPermissions = snap.permissions,
                 pendingQuestions = snap.questions,
@@ -193,6 +205,19 @@ class ChatViewModel @Inject constructor(
                 chatRepo.vcsInfo(dir).onSuccess { info ->
                     _branch.value = info.branch?.takeIf { it.isNotBlank() }
                 }
+            }
+            // Working-tree changes for the CHANGES pane: fetch once the directory is known,
+            // then refresh whenever the session settles to idle (a finished turn may have
+            // edited files). Best-effort — a backend without /vcs leaves the list empty.
+            viewModelScope.launch {
+                val dir = uiState.first { it.session?.directory != null }.session?.directory ?: return@launch
+                suspend fun refresh() = chatRepo.vcsStatus(dir).onSuccess { _changedFiles.value = it }
+                refresh()
+                chatRepo.observe(sessionId)
+                    .map { it.status }
+                    .distinctUntilChanged()
+                    .filter { it == "idle" }
+                    .collect { refresh() }
             }
             // Reload messages after a reconnection (GlobalDisposed wipes state)
             viewModelScope.launch {

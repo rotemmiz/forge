@@ -106,6 +106,20 @@ class Opcode42Client @Inject constructor(
             Opcode42Json.decodeFromJsonElement(VcsInfo.serializer(), json)
         }
 
+    /**
+     * GET /vcs/status?directory= — the directory's working-tree changes (the daemon's
+     * `git status`): the *net* changed files, not the per-message snapshot churn. Each entry
+     * carries file/additions/deletions/status; there's no patch, so it decodes into
+     * [SnapshotFileDiff] (its `patch` stays null — same wire shape as `VcsFileStatus`). A
+     * backend without `/vcs` (the Go daemon currently 501s) throws and the caller swallows it.
+     */
+    suspend fun getVcsStatus(directory: String): List<SnapshotFileDiff> =
+        transport.get("/vcs/status", directory = directory) { json ->
+            (json as? JsonArray)
+                ?.map { Opcode42Json.decodeFromJsonElement(SnapshotFileDiff.serializer(), it) }
+                ?: emptyList()
+        }
+
     /** GET /provider — providers and their models, for the model picker. */
     suspend fun listProviders(directory: String? = null): ProvidersResponse =
         transport.get("/provider", directory = directory) { json ->

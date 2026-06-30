@@ -268,28 +268,14 @@ fun AdaptiveChatScreen(
             )
         }
 
-    val aggregatedDiffs = remember(
-        chatUiState.messages,
-        chatUiState.parts,
-        chatUiState.diffs,
-        chatUiState.session?.directory,
-    ) {
+    val aggregatedDiffs = remember(chatUiState.changedFiles, chatUiState.session?.directory) {
         val dir = chatUiState.session?.directory
-        // Mirror what the conversation shows: real snapshot diffs where loaded, else the
-        // synthetic diff rebuilt from edit-tool inputs — so an edit that's already visible
-        // in the stream (snapshot diff not yet/ever provided) still lands in CHANGES.
-        sessionFileDiffs(chatUiState.messages, chatUiState.parts, chatUiState.diffs)
-            // Relativize to the session's working dir first: edit/VCS paths carry no
-            // relativity guarantee, so an absolute path would otherwise truncate to its
-            // (useless) prefix under end-ellipsis — and relativizing also merges any
-            // absolute/relative duplicates of the same file before grouping.
+        // The daemon's `git status` (/vcs/status): the *net* changed files for the working
+        // tree — one entry per file, repo-relative — not the per-message snapshot churn.
+        // relativeToDir is a safety no-op for already-relative paths; sort biggest-first so
+        // the focal (amber) row is the largest change.
+        chatUiState.changedFiles
             .map { it.copy(file = relativeToDir(it.file, dir)) }
-            .groupBy { it.file }
-            .map { (_, entries) ->
-                entries.reduce { acc, diff ->
-                    acc.copy(additions = acc.additions + diff.additions, deletions = acc.deletions + diff.deletions)
-                }
-            }
             .sortedByDescending { it.additions + it.deletions }
     }
 
@@ -776,36 +762,17 @@ internal fun SessionInfoPanel(
                             modifier = Modifier.size(13.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        // Pin the filename and let only the directory prefix ellipsize: this
-                        // Compose BOM has no start/middle ellipsis, so a single full-path Text
-                        // would clip the filename (the useful tail) on a deep path.
-                        val path = diff.file?.takeIf { it.isNotBlank() } ?: "unknown"
-                        val cut = path.lastIndexOf('/')
-                        val pathColor = if (active) Secondary else Tertiary
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (cut >= 0) {
-                                Text(
-                                    text = path.substring(0, cut + 1),
-                                    fontFamily = Opcode42Mono,
-                                    fontSize = 12.5.sp,
-                                    color = pathColor,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false),
-                                )
-                            }
-                            Text(
-                                text = path.substring(cut + 1),
+                        // Start-ellipsize so the filename + extension (the useful tail) always
+                        // survives — a deep path drops its leading dirs, not "…/foo.k…".
+                        StartEllipsisText(
+                            text = diff.file?.takeIf { it.isNotBlank() } ?: "unknown",
+                            style = TextStyle(
                                 fontFamily = Opcode42Mono,
                                 fontSize = 12.5.sp,
-                                color = pathColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                                color = if (active) Secondary else Tertiary,
+                            ),
+                            modifier = Modifier.weight(1f),
+                        )
                         Spacer(Modifier.width(6.dp))
                         // Always show both counts; a zero stays dim rather than vanishing,
                         // so the +adds / −dels columns line up down the list.

@@ -182,8 +182,8 @@ fun ChatScreen(
     val displayProvider = displayModelRef?.providerID
 
     // The composer (phone status strip + prompt input). Hosted in the Scaffold bottom
-    // bar single-pane; in multi-pane it moves under the stream column so the top bar
-    // can span the full width across rail · stream · sidebar.
+    // bar single-pane; in multi-pane it lives under the stream column so the top bar can
+    // span the chat area (stream + sidebar) and the composer never runs under the sidebar.
     val composerBar: @Composable () -> Unit = {
         Column(
             Modifier
@@ -380,10 +380,11 @@ fun ChatScreen(
                 HorizontalDivider(color = Hairline, thickness = 1.dp)
             }
         },
-        // Single-pane: the composer is the Scaffold bottom bar (full window width).
-        // Multi-pane: the chat hosts the panes, so the composer moves under the stream
-        // column (see content below) and the top bar spans the full width.
-        bottomBar = { if (infoContent == null) composerBar() },
+        // Single-pane: the composer is the Scaffold bottom bar. Multi-pane: it lives under
+        // the stream column (see content below) so it never runs under the sidebar — and,
+        // keyed on isMultiPane (not infoContent), it never re-parents when the info panel
+        // is toggled, which would otherwise drop the in-progress prompt.
+        bottomBar = { if (!isMultiPane) composerBar() },
     ) { padding ->
         Row(
             modifier = Modifier
@@ -475,9 +476,10 @@ fun ChatScreen(
                         )
                     }
                 }
-                // Sidebar present → composer sits under the stream column (not the bottom
-                // bar) so it doesn't run under the sidebar.
-                if (infoContent != null) composerBar()
+                // Multi-pane → composer sits under the stream column (not the bottom bar)
+                // so it never runs under the sidebar. Keyed on isMultiPane (not infoContent)
+                // so toggling the info panel doesn't re-parent + reset the composer.
+                if (isMultiPane) composerBar()
             }
             infoContent?.let {
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))

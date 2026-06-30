@@ -30,6 +30,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowHeightSizeClass
 import androidx.window.core.layout.WindowWidthSizeClass
+import dev.opcode42.core.model.CommandInfo
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.model.SnapshotFileDiff
 import dev.opcode42.core.model.TokenUsage
@@ -141,6 +142,7 @@ fun AdaptiveChatScreen(
 ) {
     val sessionListState by sessionListViewModel.uiState.collectAsStateWithLifecycle()
     val chatUiState by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val chatCommands by chatViewModel.commands.collectAsStateWithLifecycle()
 
     // Session-list action errors (rename/archive/delete/reply/… from the rail) surface here in
     // multi-pane — the single-pane SessionListScreen isn't composed in this host, so without this
@@ -273,6 +275,7 @@ fun AdaptiveChatScreen(
                     tokens = chatUiState.contextTokens,
                     todos = chatUiState.todos,
                     diffs = aggregatedDiffs,
+                    commands = chatCommands,
                     modifier = Modifier.width(280.dp).fillMaxHeight(),
                 )
             }
@@ -530,6 +533,7 @@ internal fun SessionInfoPanel(
     tokens: TokenUsage?,
     todos: List<TodoItem>,
     diffs: List<SnapshotFileDiff> = emptyList(),
+    commands: List<CommandInfo> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -678,6 +682,46 @@ internal fun SessionInfoPanel(
                         color = if (todo.status == "completed") OnSurfaceFaint else OnSurfaceVariant,
                         lineHeight = 18.sp,
                     )
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+        }
+
+        if (commands.isNotEmpty()) {
+            InfoSectionHeader("COMMANDS")
+            commands.forEach { cmd ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
+                ) {
+                    Text(
+                        text = "/${cmd.name}",
+                        fontFamily = Opcode42Mono,
+                        fontSize = 12.5.sp,
+                        color = LinkCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    cmd.source?.takeIf { it == "mcp" || it == "skill" }?.let { src ->
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = src,
+                            fontFamily = Opcode42Mono,
+                            fontSize = 10.sp,
+                            color = if (src == "mcp") HeaderPurple else OnSurfaceFaint,
+                        )
+                    }
+                    cmd.description?.let { desc ->
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = desc,
+                            fontSize = 12.sp,
+                            color = OnSurfaceFaint,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(3.dp))

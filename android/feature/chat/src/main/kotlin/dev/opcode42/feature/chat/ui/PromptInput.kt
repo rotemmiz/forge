@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -254,7 +255,7 @@ fun PromptInput(
         // always spans the box; children are centered vertically.
         val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
         val rail = Primary
-        val shape = RoundedCornerShape(6.dp)
+        val shape = RoundedCornerShape(14.dp)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -271,7 +272,6 @@ fun PromptInput(
                 onValueChange = { text = it },
                 textStyle = TextStyle(
                     color = OnSurface,
-                    fontFamily = Opcode42Mono,
                     fontSize = 13.5.sp,
                 ),
                 cursorBrush = SolidColor(Primary),
@@ -284,7 +284,6 @@ fun PromptInput(
                         Text(
                             "Ask anything…  /  @",
                             color = OnSurfaceGhost,
-                            fontFamily = Opcode42Mono,
                             fontSize = 13.5.sp,
                         )
                     }
@@ -354,7 +353,7 @@ fun PromptInput(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(shape)
+                        .clip(CircleShape)
                         .background(
                             when {
                                 busy -> Error

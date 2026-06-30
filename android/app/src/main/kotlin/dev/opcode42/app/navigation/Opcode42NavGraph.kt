@@ -1,7 +1,10 @@
 package dev.opcode42.app.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,6 +37,15 @@ sealed class Screen(val route: String) {
         fun route(sessionId: String) = "tasks/$sessionId"
     }
 }
+
+/**
+ * The chat/draft destinations that share [AdaptiveChatScreen]. Switching among them
+ * (e.g. picking another session in the multi-pane rail) must swap the chat content in
+ * place — not slide a whole new screen over the rail/sidebar — so these transitions are
+ * suppressed; list ↔ chat transitions fall through to the NavHost default.
+ */
+private fun isChatFamily(entry: NavBackStackEntry): Boolean =
+    entry.destination.route == Screen.Chat.route || entry.destination.route == Screen.NewChat.route
 
 @Composable
 fun Opcode42NavGraph(
@@ -81,6 +93,10 @@ fun Opcode42NavGraph(
         composable(
             route = Screen.Chat.route,
             arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+            enterTransition = { if (isChatFamily(initialState)) EnterTransition.None else null },
+            exitTransition = { if (isChatFamily(targetState)) ExitTransition.None else null },
+            popEnterTransition = { if (isChatFamily(initialState)) EnterTransition.None else null },
+            popExitTransition = { if (isChatFamily(targetState)) ExitTransition.None else null },
         ) { backStackEntry ->
             val sessionId = backStackEntry.arguments?.getString("sessionId") ?: return@composable
             AdaptiveChatScreen(
@@ -90,7 +106,14 @@ fun Opcode42NavGraph(
                     navController.navigate(Screen.Terminal.route(directory))
                 },
                 onNavigateToSession = { newSessionId ->
-                    navController.navigate(Screen.Chat.route(newSessionId))
+                    // Switch sessions in place: replace the current chat rather than stacking,
+                    // so Back returns to the sessions list (not a trail of previously-viewed
+                    // sessions). Paired with the suppressed chat↔chat transition, this reads as
+                    // the same window changing session.
+                    navController.navigate(Screen.Chat.route(newSessionId)) {
+                        popUpTo(Screen.Chat.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 },
                 onNewSession = {
                     navController.navigate(Screen.NewChat.route)
@@ -113,6 +136,10 @@ fun Opcode42NavGraph(
                     defaultValue = DRAFT_SESSION_ID
                 },
             ),
+            enterTransition = { if (isChatFamily(initialState)) EnterTransition.None else null },
+            exitTransition = { if (isChatFamily(targetState)) ExitTransition.None else null },
+            popEnterTransition = { if (isChatFamily(initialState)) EnterTransition.None else null },
+            popExitTransition = { if (isChatFamily(targetState)) ExitTransition.None else null },
         ) {
             AdaptiveChatScreen(
                 sessionId = DRAFT_SESSION_ID,

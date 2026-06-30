@@ -2,12 +2,8 @@ package dev.opcode42.app.ui
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -15,6 +11,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
@@ -31,9 +30,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowHeightSizeClass
 import androidx.window.core.layout.WindowWidthSizeClass
+import dev.opcode42.core.model.CommandInfo
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.model.SnapshotFileDiff
 import dev.opcode42.core.model.TokenUsage
+import dev.opcode42.core.design.brand.Spinner
 import dev.opcode42.core.design.theme.*
 import dev.opcode42.feature.chat.ChatViewModel
 import dev.opcode42.feature.chat.DRAFT_SESSION_ID
@@ -44,6 +45,7 @@ import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListUiState
 import dev.opcode42.feature.sessions.SessionListViewModel
 import dev.opcode42.feature.sessions.ui.SessionBrowser
+import dev.opcode42.feature.sessions.ui.isSessionBusy
 import kotlinx.coroutines.launch
 
 /** How the collapsible left sessions menu is presented. Closed by default in both modes. */
@@ -141,6 +143,7 @@ fun AdaptiveChatScreen(
 ) {
     val sessionListState by sessionListViewModel.uiState.collectAsStateWithLifecycle()
     val chatUiState by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val chatCommands by chatViewModel.commands.collectAsStateWithLifecycle()
 
     // Session-list action errors (rename/archive/delete/reply/… from the rail) surface here in
     // multi-pane — the single-pane SessionListScreen isn't composed in this host, so without this
@@ -273,6 +276,7 @@ fun AdaptiveChatScreen(
                     tokens = chatUiState.contextTokens,
                     todos = chatUiState.todos,
                     diffs = aggregatedDiffs,
+                    commands = chatCommands,
                     modifier = Modifier.width(280.dp).fillMaxHeight(),
                 )
             }
@@ -298,30 +302,113 @@ fun AdaptiveChatScreen(
             ) {
                 centerPane(Modifier.fillMaxSize())
             }
-            // Wider windows: the menu pushes the chat aside (inline), closed by default.
+            // Wider windows: the menu pushes the chat aside (inline). Open = the full
+            // 220dp rail; collapsed = a narrow 60dp icon band (sessions + running status
+            // stay reachable) rather than vanishing entirely.
             LeftRailMode.InlinePush -> Row(Modifier.fillMaxSize()) {
-                AnimatedVisibility(
-                    visible = railOpen,
-                    enter = slideInHorizontally { -it } + expandHorizontally(expandFrom = Alignment.Start),
-                    exit = slideOutHorizontally { -it } + shrinkHorizontally(shrinkTowards = Alignment.Start),
-                ) {
-                    Row(Modifier.fillMaxHeight()) {
-                        // Selecting a session keeps the persistent triptych rail open (only a
-                        // manually-opened Medium rail collapses); the chat content swaps in
-                        // place. The collapse chevron always closes the rail.
-                        railPane(
-                            Modifier.width(220.dp).fillMaxHeight(),
-                            { if (!layout.railPersistent) railOpen = false },
-                            { railOpen = false },
-                        )
-                        Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
-                    }
+                if (railOpen) {
+                    // Selecting a session keeps the persistent triptych rail open (only a
+                    // manually-opened Medium rail collapses); the chat content swaps in
+                    // place. The collapse chevron always closes the rail.
+                    railPane(
+                        Modifier.width(220.dp).fillMaxHeight(),
+                        { if (!layout.railPersistent) railOpen = false },
+                        { railOpen = false },
+                    )
+                } else {
+                    CollapsedRail(
+                        sessions = sessionListState.groups.flatMap { it.sessions },
+                        statuses = sessionListState.statuses,
+                        activeId = sessionId,
+                        onExpand = { railOpen = true },
+                        onNew = onNewSession,
+                        onSelect = { id -> onNavigateToSession(id) },
+                    )
                 }
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Hairline))
                 centerPane(Modifier.weight(1f))
             }
         }
 
         SnackbarHost(sessionSnackbar, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+// ─── Collapsed icon rail (narrow band) ─────────────────────────────────────────
+
+/**
+ * The 60dp band the inline rail collapses to: an expand affordance, New, and the
+ * sessions as initial-avatars so switching + running status stay reachable without
+ * opening the full rail. Active = amber fill; a busy session shows a spinner badge.
+ */
+@Composable
+private fun CollapsedRail(
+    sessions: List<Session>,
+    statuses: Map<String, String>,
+    activeId: String,
+    onExpand: () -> Unit,
+    onNew: () -> Unit,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.width(60.dp).fillMaxHeight().background(Surface),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(8.dp))
+        IconButton(onClick = onExpand, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Default.Menu, contentDescription = "Expand navigation", tint = OnSurface, modifier = Modifier.size(20.dp))
+        }
+        IconButton(onClick = onNew, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Default.Add, contentDescription = "New session", tint = Primary, modifier = Modifier.size(20.dp))
+        }
+        HorizontalDivider(color = Hairline, modifier = Modifier.width(28.dp).padding(vertical = 6.dp))
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sessions.forEach { s ->
+                val active = s.id == activeId
+                val busy = isSessionBusy(statuses[s.id])
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(if (active) Secondary else SurfaceContainerHigh)
+                            .clickable { onSelect(s.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = sessionInitials(s.title),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (active) OnSecondary else OnSurfaceVariant,
+                        )
+                    }
+                    if (busy) {
+                        Spinner(
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                            size = 13.dp,
+                            color = if (active) OnSecondary else Secondary,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+private fun sessionInitials(title: String?): String {
+    val t = title?.trim().orEmpty()
+    if (t.isEmpty()) return "?"
+    val words = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
+    return if (words.size >= 2) {
+        "${words[0].first()}${words[1].first()}".uppercase()
+    } else {
+        t.take(2).uppercase()
     }
 }
 
@@ -445,6 +532,7 @@ internal fun SessionInfoPanel(
     tokens: TokenUsage?,
     todos: List<TodoItem>,
     diffs: List<SnapshotFileDiff> = emptyList(),
+    commands: List<CommandInfo> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -461,7 +549,6 @@ internal fun SessionInfoPanel(
             InfoSectionHeader("SESSION")
             InfoRow("title", session.title ?: "Untitled")
             InfoRow("id", session.id.take(8))
-            session.directory?.let { InfoRow("dir", it) }
         }
 
         if (modelID != null || providerID != null) {
@@ -570,25 +657,71 @@ internal fun SessionInfoPanel(
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
                 ) {
-                    val (dot, dotColor) = when (todo.status) {
-                        "completed" -> "✓" to Tertiary
-                        "in_progress" -> "→" to Secondary
-                        else -> "·" to OnSurfaceFaint
+                    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                        when (todo.status) {
+                            "completed" -> Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Tertiary,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            "in_progress" -> Spinner(size = 13.dp, color = Secondary)
+                            else -> Icon(
+                                Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = OnSurfaceFaint,
+                                modifier = Modifier.size(12.dp),
+                            )
+                        }
                     }
-                    Text(
-                        text = dot,
-                        fontFamily = Opcode42Mono,
-                        fontSize = 12.5.sp,
-                        color = dotColor,
-                        modifier = Modifier.width(16.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         text = todo.content,
                         fontSize = 13.5.sp,
                         color = if (todo.status == "completed") OnSurfaceFaint else OnSurfaceVariant,
                         lineHeight = 18.sp,
                     )
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+        }
+
+        if (commands.isNotEmpty()) {
+            InfoSectionHeader("COMMANDS")
+            commands.forEach { cmd ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 1.dp),
+                ) {
+                    Text(
+                        text = "/${cmd.name}",
+                        fontFamily = Opcode42Mono,
+                        fontSize = 12.5.sp,
+                        color = LinkCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 130.dp),
+                    )
+                    cmd.source?.takeIf { it == "mcp" || it == "skill" }?.let { src ->
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = src,
+                            fontFamily = Opcode42Mono,
+                            fontSize = 10.sp,
+                            color = if (src == "mcp") HeaderPurple else OnSurfaceFaint,
+                        )
+                    }
+                    cmd.description?.let { desc ->
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = desc,
+                            fontSize = 12.sp,
+                            color = OnSurfaceFaint,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(3.dp))

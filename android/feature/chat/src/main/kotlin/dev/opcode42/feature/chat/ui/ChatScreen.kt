@@ -5,6 +5,7 @@ import dev.opcode42.core.design.brand.AsteriskMark
 import dev.opcode42.core.design.brand.Spinner
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -176,17 +177,6 @@ fun ChatScreen(
     Scaffold(
         containerColor = Surface,
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            if (!isMultiPane && sessionDirectory != null) {
-                FloatingActionButton(
-                    onClick = { onOpenTerminal(sessionDirectory) },
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ) {
-                    Icon(Icons.Default.Terminal, contentDescription = "Open Terminal")
-                }
-            }
-        },
         topBar = {
             // Custom 52dp dense bar (design §1) — M3 TopAppBar's 64dp is too tall.
             Column(Modifier.background(Surface).then(if (applySystemInsets) Modifier.statusBarsPadding() else Modifier)) {
@@ -241,29 +231,47 @@ fun ChatScreen(
                         }
                     }
                     if (!isDraft && isMultiPane) {
-                        // Mode badge + model — right panel shows full session info so only compact version here.
-                        Text(
-                            text = (displayAgent ?: "build").replaceFirstChar { it.uppercase() },
-                            fontFamily = Opcode42Mono,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = OnPrimary,
-                            modifier = Modifier
-                                .clip(Opcode42Shapes.xs)
-                                .background(Primary)
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                        if (displayModel != null) {
-                            Spacer(Modifier.width(6.dp))
+                        // Mode badge + model — tap opens the model/agent picker (the
+                        // multi-pane equivalent of the phone status strip's tap target).
+                        val openPicker: (() -> Unit)? =
+                            if (providers.isNotEmpty() || agents.isNotEmpty()) {
+                                { showModelPicker = true }
+                            } else {
+                                null
+                            }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = (
+                                if (openPicker != null) {
+                                    Modifier.clip(Opcode42Shapes.sm).clickable(onClick = openPicker)
+                                } else {
+                                    Modifier
+                                }
+                                ).padding(horizontal = 2.dp),
+                        ) {
                             Text(
-                                text = displayModel,
+                                text = (displayAgent ?: "build").replaceFirstChar { it.uppercase() },
                                 fontFamily = Opcode42Mono,
                                 fontSize = 11.sp,
-                                color = OnSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 100.dp),
+                                fontWeight = FontWeight.Bold,
+                                color = OnPrimary,
+                                modifier = Modifier
+                                    .clip(Opcode42Shapes.xs)
+                                    .background(Primary)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
                             )
+                            if (displayModel != null) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = displayModel,
+                                    fontFamily = Opcode42Mono,
+                                    fontSize = 11.sp,
+                                    color = OnSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 100.dp),
+                                )
+                            }
                         }
                         if (showInfoToggle) {
                             // Collapse/expand the right session-info panel (on by default).
@@ -292,6 +300,9 @@ fun ChatScreen(
                             expanded = showOverflow,
                             onDismiss = { showOverflow = false },
                             isShared = uiState.session?.share != null,
+                            onTerminal = sessionDirectory?.let { dir ->
+                                { showOverflow = false; onOpenTerminal(dir) }
+                            },
                             onRename = {
                                 showOverflow = false
                                 showRenameDialog = true
@@ -331,16 +342,20 @@ fun ChatScreen(
                     .background(Surface)
                     .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
             ) {
-                HorizontalDivider(color = Hairline)
-                StatusStrip(
-                    mode = displayAgent,
-                    model = displayModel,
-                    provider = displayProvider,
-                    tokens = uiState.session?.tokens,
-                    onClick = if (providers.isNotEmpty() || agents.isNotEmpty()) {
-                        { showModelPicker = true }
-                    } else null,
-                )
+                // Multi-pane carries the mode + model in the top bar (top-right), so the
+                // composer's status strip is phone-only — no redundant bar above the box.
+                if (!isMultiPane) {
+                    HorizontalDivider(color = Hairline)
+                    StatusStrip(
+                        mode = displayAgent,
+                        model = displayModel,
+                        provider = displayProvider,
+                        tokens = uiState.session?.tokens,
+                        onClick = if (providers.isNotEmpty() || agents.isNotEmpty()) {
+                            { showModelPicker = true }
+                        } else null,
+                    )
+                }
                 HorizontalDivider(color = Hairline)
                 PromptInput(
                     onSend = { text, attachments -> viewModel.sendPrompt(text, attachments) },
@@ -545,6 +560,7 @@ private fun OverflowMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     isShared: Boolean,
+    onTerminal: (() -> Unit)? = null,
     onRename: () -> Unit,
     onFork: () -> Unit,
     onSummarize: () -> Unit,
@@ -557,6 +573,14 @@ private fun OverflowMenu(
         onDismissRequest = onDismiss,
         containerColor = SurfaceContainerHigh,
     ) {
+        onTerminal?.let { open ->
+            DropdownMenuItem(
+                text = { Text("Open terminal", color = OnSurface) },
+                leadingIcon = { Icon(Icons.Default.Terminal, contentDescription = null, tint = OnSurfaceVariant) },
+                onClick = open,
+            )
+            HorizontalDivider(color = Hairline)
+        }
         DropdownMenuItem(
             text = { Text("Rename session", color = OnSurface) },
             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = OnSurfaceVariant) },

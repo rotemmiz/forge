@@ -2,18 +2,23 @@ package dev.opcode42.app.ui
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material3.*
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
@@ -21,10 +26,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -216,6 +222,7 @@ fun AdaptiveChatScreen(
                 onSelect()
                 onNewSession()
             },
+            onOpenTasksBoard = onOpenTasksBoard,
             onQueryChange = sessionListViewModel::setQuery,
             onFilterChange = sessionListViewModel::setFilter,
             onRename = sessionListViewModel::renameSession,
@@ -303,6 +310,7 @@ fun AdaptiveChatScreen(
                 activeId = sessionId,
                 onExpand = { railOpen = true },
                 onNew = onNewSession,
+                onOpenTasksBoard = onOpenTasksBoard,
                 onSelect = { id -> onNavigateToSession(id) },
             )
         }
@@ -347,10 +355,14 @@ fun AdaptiveChatScreen(
 
 // ─── Collapsed icon rail (narrow band) ─────────────────────────────────────────
 
+private val RailDotSize = 38.dp
+private val RailDotShape = RoundedCornerShape(8.dp)
+
 /**
- * The 60dp band the inline rail collapses to: an expand affordance, New, and the
- * sessions as initial-avatars so switching + running status stay reachable without
- * opening the full rail. Active = amber fill; a busy session shows a spinner badge.
+ * The 60dp band the inline rail collapses to (design `SessionRail`, collapsed): an expand
+ * chevron, the Conversation / Tasks nav, New, and the sessions as single-letter avatars so
+ * switching + running status stay reachable without opening the full rail. Active = amber
+ * tint + a left accent; a busy session shows an asterisk-loader badge at the top-right.
  */
 @Composable
 private fun CollapsedRail(
@@ -359,69 +371,139 @@ private fun CollapsedRail(
     activeId: String,
     onExpand: () -> Unit,
     onNew: () -> Unit,
+    onOpenTasksBoard: () -> Unit,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Hoisted: token accessors are @Composable, so the active accent must be read here,
+    // not inside the non-composable drawBehind lambda below.
+    val accent = Secondary
     Column(
-        modifier = modifier.width(60.dp).fillMaxHeight().background(Surface),
+        modifier = modifier.width(60.dp).fillMaxHeight().background(SurfaceContainerLow),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(8.dp))
-        IconButton(onClick = onExpand, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Default.Menu, contentDescription = "Expand navigation", tint = OnSurface, modifier = Modifier.size(20.dp))
+        Box(Modifier.fillMaxWidth().height(54.dp), contentAlignment = Alignment.Center) {
+            IconButton(onClick = onExpand, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Expand navigation",
+                    tint = OnSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
-        IconButton(onClick = onNew, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Default.Add, contentDescription = "New session", tint = Primary, modifier = Modifier.size(20.dp))
-        }
-        HorizontalDivider(color = Hairline, modifier = Modifier.width(28.dp).padding(vertical = 6.dp))
+        HorizontalDivider(color = Hairline, thickness = 1.dp)
         Column(
-            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            // Conversation is the current view (active); Tasks opens the tasks board.
+            RailIconDot(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, onClick = {})
+            RailIconDot(Icons.AutoMirrored.Filled.FormatListBulleted, "Tasks", active = false, onClick = onOpenTasksBoard)
+            HorizontalDivider(color = Hairline, modifier = Modifier.width(24.dp).padding(vertical = 2.dp))
+            Box(
+                Modifier
+                    .size(RailDotSize)
+                    .clip(RailDotShape)
+                    .background(SurfaceContainerHigh)
+                    .border(1.dp, Hairline, RailDotShape)
+                    .clickable(onClick = onNew),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "New session", tint = Primary, modifier = Modifier.size(16.dp))
+            }
             sessions.forEach { s ->
                 val active = s.id == activeId
                 val busy = isSessionBusy(statuses[s.id])
-                Box(contentAlignment = Alignment.Center) {
+                Box {
                     Box(
                         Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (active) Secondary else SurfaceContainerHigh)
+                            .size(RailDotSize)
+                            .clip(RailDotShape)
+                            .then(
+                                if (active) {
+                                    Modifier
+                                        .background(SecondaryContainer)
+                                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .clickable { onSelect(s.id) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = sessionInitials(s.title),
+                            text = sessionInitial(s.title),
+                            fontFamily = Opcode42Mono,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (active) OnSecondary else OnSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                            color = if (active) OnSurface else OnSurfaceVariant,
                         )
                     }
                     if (busy) {
-                        Spinner(
-                            modifier = Modifier.align(Alignment.BottomEnd),
-                            size = 13.dp,
-                            color = if (active) OnSecondary else Secondary,
-                        )
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 3.dp, y = (-3).dp)
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(SurfaceContainerLow)
+                                .border(1.dp, Hairline, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Spinner(size = 10.dp, color = Secondary)
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+        }
+        HorizontalDivider(color = Hairline, thickness = 1.dp)
+        Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(Tertiary))
         }
     }
 }
 
-private fun sessionInitials(title: String?): String {
-    val t = title?.trim().orEmpty()
-    if (t.isEmpty()) return "?"
-    val words = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
-    return if (words.size >= 2) {
-        "${words[0].first()}${words[1].first()}".uppercase()
-    } else {
-        t.take(2).uppercase()
+/** A 38dp rounded-square nav button for the collapsed rail (Conversation / Tasks). */
+@Composable
+private fun RailIconDot(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val accent = Secondary
+    Box(
+        Modifier
+            .size(RailDotSize)
+            .clip(RailDotShape)
+            .then(
+                if (active) {
+                    Modifier
+                        .background(SecondaryContainer)
+                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (active) accent else OnSurfaceVariant,
+            modifier = Modifier.size(17.dp),
+        )
     }
 }
+
+private fun sessionInitial(title: String?): String =
+    title?.trim()?.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
 
 // ─── Left nav rail pane ────────────────────────────────────────────────────────
 
@@ -432,6 +514,7 @@ internal fun NavRailPane(
     activeDirectory: String?,
     onSelectSession: (String) -> Unit,
     onNewSession: () -> Unit,
+    onOpenTasksBoard: () -> Unit,
     onQueryChange: (String) -> Unit,
     onFilterChange: (SessionFilter) -> Unit,
     onRename: (String, String) -> Unit,
@@ -444,42 +527,62 @@ internal fun NavRailPane(
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxSize().background(Surface)) {
+    Column(modifier.fillMaxSize().background(SurfaceContainerLow)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-                .padding(horizontal = 10.dp),
+                .height(54.dp)
+                .padding(start = 14.dp, end = 6.dp),
         ) {
             Text(
                 text = "opcode42",
                 fontFamily = Opcode42Mono,
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
+                fontSize = 16.sp,
+                letterSpacing = 1.sp,
                 color = OnSurface,
                 modifier = Modifier.weight(1f),
             )
-            FilledTonalButton(
+            // Subtle bordered "New" (design): surface-container-high fill, hairline border,
+            // blue plus — not a filled tonal button.
+            Surface(
                 onClick = onNewSession,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                modifier = Modifier.height(28.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = SurfaceContainerHigh,
+                border = BorderStroke(1.dp, Hairline),
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(3.dp))
-                Text("New", fontSize = 12.sp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Primary, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New", fontSize = 12.5.sp, color = OnSurface)
+                }
             }
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(2.dp))
             IconButton(onClick = onCollapse, modifier = Modifier.size(32.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                     contentDescription = "Collapse navigation",
-                    tint = OnSurfaceFaint,
+                    tint = OnSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
             }
         }
         HorizontalDivider(color = Hairline, thickness = 1.dp)
+
+        // Conversation / Tasks nav segment — Conversation is the current view (active);
+        // Tasks opens the tasks board.
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            NavRow(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, onClick = {})
+            NavRow(Icons.AutoMirrored.Filled.FormatListBulleted, "Tasks", active = false, onClick = onOpenTasksBoard)
+        }
+        HorizontalDivider(color = Hairline, thickness = 1.dp, modifier = Modifier.padding(horizontal = 10.dp))
 
         SessionBrowser(
             uiState = uiState,
@@ -495,6 +598,7 @@ internal fun NavRailPane(
             onReplyQuestion = onReplyQuestion,
             onSkipQuestion = onSkipQuestion,
             compact = true,
+            containerColor = SurfaceContainerLow,
             modifier = Modifier.weight(1f),
         )
 
@@ -529,6 +633,49 @@ internal fun NavRailPane(
                 )
             }
         }
+    }
+}
+
+/** A full-width Conversation / Tasks nav row in the open rail. */
+@Composable
+private fun NavRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val accent = Secondary
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .then(
+                if (active) {
+                    Modifier
+                        .background(SecondaryContainer)
+                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (active) accent else OnSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = label,
+            fontSize = 13.5.sp,
+            color = if (active) OnSurface else OnSurfaceVariant,
+            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+        )
     }
 }
 
@@ -610,11 +757,10 @@ internal fun SessionInfoPanel(
             ) {
                 Text(
                     text = "CHANGES",
-                    fontSize = 11.5.sp,
-                    letterSpacing = 0.1.em,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Secondary,
-                    fontFamily = Opcode42Mono,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.6.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HeaderPurple,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
@@ -744,14 +890,15 @@ internal fun SessionInfoPanel(
 
 @Composable
 private fun InfoSectionHeader(label: String) {
+    // Purple uppercase sans — the design's single section-header voice across the rail,
+    // the right info panel, and the phone list.
     Text(
         text = label,
-        modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 2.dp),
-        fontSize = 11.5.sp,
-        letterSpacing = 0.1.em,
-        fontWeight = FontWeight.SemiBold,
-        color = Secondary,
-        fontFamily = Opcode42Mono,
+        modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 9.dp, bottom = 3.dp),
+        fontSize = 11.sp,
+        letterSpacing = 0.6.sp,
+        fontWeight = FontWeight.Bold,
+        color = HeaderPurple,
     )
 }
 

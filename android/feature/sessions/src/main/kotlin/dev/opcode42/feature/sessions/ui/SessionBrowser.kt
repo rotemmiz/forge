@@ -2,17 +2,25 @@ package dev.opcode42.feature.sessions.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -21,7 +29,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,23 +39,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.opcode42.core.design.theme.Opcode42Mono
+import dev.opcode42.core.design.theme.Hairline
+import dev.opcode42.core.design.theme.HeaderPurple
+import dev.opcode42.core.design.theme.OnSurface
+import dev.opcode42.core.design.theme.OnSurfaceFaint
+import dev.opcode42.core.design.theme.OnSurfaceGhost
 import dev.opcode42.core.design.theme.OnSurfaceVariant
-import dev.opcode42.core.design.theme.Secondary
+import dev.opcode42.core.design.theme.Primary
 import dev.opcode42.core.design.theme.Surface
+import dev.opcode42.core.design.theme.SurfaceContainer
 import dev.opcode42.core.model.Session
 import dev.opcode42.feature.sessions.SessionFilter
 import dev.opcode42.feature.sessions.SessionListUiState
 
 /**
  * Self-contained sessions browser shared by the full-screen list and the in-chat left rail:
- * a search field, status filter tabs (All / Working / Needs input with live counts), and a
- * date-grouped, recency-ordered `LazyColumn` of [SessionRow]s. Owns the rename dialog so any
- * surface gets rename for free. [compact] tightens it for the narrow (220dp) rail.
+ * a search field and a recency-ordered `LazyColumn` of [SessionRow]s. The full list keeps
+ * status filter tabs (All / Working / Needs input) and date-group headers; the [compact] rail
+ * drops the tabs and lists everything flat under a single purple `SESSIONS` header (the date
+ * moves into each row's meta line), per the design. Owns the rename dialog so any surface gets
+ * rename for free. [containerColor] backs the sticky headers so rows scroll cleanly under them.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -67,30 +85,45 @@ fun SessionBrowser(
     onSkipQuestion: (String) -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    containerColor: Color = Surface,
 ) {
     var renameTarget by remember { mutableStateOf<Session?>(null) }
     val hPad = if (compact) 8.dp else 12.dp
 
+    // One row renderer, reused by the flat (rail) and date-grouped (full list) layouts below.
+    val rowContent: @Composable (Session) -> Unit = { session ->
+        val permission = uiState.pendingPermissions[session.id]
+        val question = uiState.pendingQuestions[session.id]
+        SessionRow(
+            session = session,
+            isActive = session.id == activeSessionId,
+            status = uiState.statuses[session.id],
+            pendingPermission = permission,
+            pendingQuestion = question,
+            showArchived = uiState.showArchived,
+            onClick = { onOpen(session) },
+            onRename = { renameTarget = session },
+            onArchive = { onArchive(session.id) },
+            onFork = { onFork(session.id) },
+            onDelete = { onDelete(session.id) },
+            onApprove = { permission?.let { onReplyPermission(it.id, true) } },
+            onDeny = { permission?.let { onReplyPermission(it.id, false) } },
+            onReply = { answer -> question?.let { onReplyQuestion(it.id, answer) } },
+            onSkip = { question?.let { onSkipQuestion(it.id) } },
+            compact = compact,
+        )
+    }
+
     Column(modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = uiState.query,
-            onValueChange = onQueryChange,
-            placeholder = { Text("Search", fontSize = if (compact) 13.sp else 15.sp) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            trailingIcon = {
-                if (uiState.query.isNotEmpty()) {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear search")
-                    }
-                }
-            },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = hPad, vertical = 6.dp),
+        SessionSearchField(
+            query = uiState.query,
+            onQueryChange = onQueryChange,
+            compact = compact,
+            modifier = Modifier.padding(horizontal = hPad, vertical = 6.dp),
         )
 
-        if (!uiState.showArchived) {
+        // Filter tabs are a full-list affordance; the rail lists sessions flat (design).
+        if (!compact && !uiState.showArchived) {
             FilterTabs(uiState, onFilterChange, compact, Modifier.padding(horizontal = hPad))
         }
 
@@ -111,29 +144,16 @@ fun SessionBrowser(
             }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
-                uiState.groups.forEach { group ->
-                    stickyHeader(key = "h:${group.header}") { DateHeader(group.header, hPad) }
-                    items(group.sessions, key = { it.id }) { session ->
-                        val permission = uiState.pendingPermissions[session.id]
-                        val question = uiState.pendingQuestions[session.id]
-                        SessionRow(
-                            session = session,
-                            isActive = session.id == activeSessionId,
-                            status = uiState.statuses[session.id],
-                            pendingPermission = permission,
-                            pendingQuestion = question,
-                            showArchived = uiState.showArchived,
-                            onClick = { onOpen(session) },
-                            onRename = { renameTarget = session },
-                            onArchive = { onArchive(session.id) },
-                            onFork = { onFork(session.id) },
-                            onDelete = { onDelete(session.id) },
-                            onApprove = { permission?.let { onReplyPermission(it.id, true) } },
-                            onDeny = { permission?.let { onReplyPermission(it.id, false) } },
-                            onReply = { answer -> question?.let { onReplyQuestion(it.id, answer) } },
-                            onSkip = { question?.let { onSkipQuestion(it.id) } },
-                            compact = compact,
-                        )
+                if (compact) {
+                    // Rail: a single purple SESSIONS header over a flat, recency-ordered list.
+                    stickyHeader(key = "h:SESSIONS") { SectionHeader("SESSIONS", hPad, containerColor) }
+                    items(uiState.groups.flatMap { it.sessions }, key = { it.id }) { rowContent(it) }
+                } else {
+                    uiState.groups.forEach { group ->
+                        stickyHeader(key = "h:${group.header}") {
+                            SectionHeader(group.header, hPad, containerColor)
+                        }
+                        items(group.sessions, key = { it.id }) { rowContent(it) }
                     }
                 }
             }
@@ -149,6 +169,63 @@ fun SessionBrowser(
             },
             onDismiss = { renameTarget = null },
         )
+    }
+}
+
+/**
+ * The design's compact boxed search — a single-line field (surface-container fill, hairline
+ * border) rather than a tall M3 outlined field, so it stays 38/44dp and the placeholder never
+ * wraps in the narrow rail.
+ */
+@Composable
+private fun SessionSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(if (compact) 8.dp else 14.dp)
+    val textSize = if (compact) 13.sp else 14.sp
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(if (compact) 38.dp else 44.dp)
+            .clip(shape)
+            .background(SurfaceContainer)
+            .border(1.dp, Hairline, shape)
+            .padding(horizontal = 11.dp),
+    ) {
+        Icon(
+            Icons.Default.Search,
+            contentDescription = null,
+            tint = OnSurfaceFaint,
+            modifier = Modifier.size(if (compact) 16.dp else 18.dp),
+        )
+        Spacer(Modifier.width(9.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (query.isEmpty()) {
+                Text("Search sessions…", color = OnSurfaceGhost, fontSize = textSize, maxLines = 1)
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(color = OnSurface, fontSize = textSize),
+                cursorBrush = SolidColor(Primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (query.isNotEmpty()) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "Clear search",
+                tint = OnSurfaceFaint,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable { onQueryChange("") },
+            )
+        }
     }
 }
 
@@ -182,19 +259,20 @@ private fun FilterTabs(
 }
 
 @Composable
-private fun DateHeader(text: String, hPad: androidx.compose.ui.unit.Dp) {
-    // Amber uppercase mono, matching the in-chat sidebar section headers (SESSION / MODEL …).
+private fun SectionHeader(text: String, hPad: androidx.compose.ui.unit.Dp, bg: Color) {
+    // Purple uppercase sans — the design's one section-header voice (rail SESSIONS, date
+    // groups, the right info panel, the phone list label all share it). [bg] matches the
+    // surface behind it so rows scroll cleanly under the sticky header.
     Text(
         text = text.uppercase(),
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface)
-            .padding(start = hPad + 4.dp, end = hPad + 4.dp, top = 12.dp, bottom = 5.dp),
-        fontFamily = Opcode42Mono,
-        fontSize = 10.5.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.8.sp,
-        color = Secondary,
+            .background(bg)
+            .padding(start = hPad + 4.dp, end = hPad + 4.dp, top = 12.dp, bottom = 6.dp),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.6.sp,
+        color = HeaderPurple,
     )
 }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,8 +48,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
+import kotlin.math.roundToInt
 import dev.opcode42.core.design.theme.Hairline
 import dev.opcode42.core.design.theme.HeaderPurple
 import dev.opcode42.core.design.theme.OnSurface
@@ -218,7 +222,11 @@ private fun SessionSearchField(
             Icons.Default.Search,
             contentDescription = null,
             tint = OnSurfaceFaint,
-            modifier = Modifier.size(if (compact) 16.dp else 18.dp),
+            modifier = Modifier
+                .size(if (compact) 16.dp else 18.dp)
+                // Nudge the icon to the center of the collapsed search dot (it sits 3dp left of
+                // center at the box's 11dp inset); a no-op when open (progress = 1).
+                .offset { IntOffset(lerp(3.dp.toPx(), 0f, progress()).roundToInt(), 0) },
         )
         Spacer(Modifier.width(9.dp))
         Box(

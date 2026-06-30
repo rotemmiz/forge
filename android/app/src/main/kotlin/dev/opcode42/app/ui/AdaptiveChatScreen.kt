@@ -59,7 +59,6 @@ import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListUiState
 import dev.opcode42.feature.sessions.SessionListViewModel
 import dev.opcode42.feature.sessions.ui.SessionBrowser
-import dev.opcode42.feature.sessions.ui.isSessionBusy
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -478,8 +477,9 @@ internal fun NavRailPane(
 
         // Conversation / Tasks nav segment — Conversation is the current view (active);
         // Tasks opens the tasks board. Labels fade + icons glide to center as the rail collapses.
+        // No horizontal padding here: NavRow spans the full band so the icon centers in 60dp.
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             NavRow(Icons.Outlined.ChatBubbleOutline, "Conversation", active = true, progress = progress, onClick = {})
@@ -548,35 +548,46 @@ private fun NavRow(
     onClick: () -> Unit,
 ) {
     val accent = Secondary
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+    Box(
+        Modifier
             .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .then(
-                if (active) {
-                    Modifier
-                        .background(SecondaryContainer)
-                        .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
-                } else {
-                    Modifier
-                },
-            )
-            .clickable(onClick = onClick)
-            // Glide the content right so the 16dp icon ends centered in the 60dp band.
-            .offset {
-                IntOffset(androidx.compose.ui.util.lerp(12.dp.toPx(), 0f, progress()).roundToInt(), 0)
-            }
-            .padding(horizontal = 10.dp),
+            .height(40.dp)
+            .clickable(onClick = onClick),
     ) {
+        // Active highlight morphs (like the session rows): a full-width pill when open (fades out)
+        // and a 38dp square at inset 11 — centered in the 60dp band — when collapsed (fades in).
+        if (active) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                    .graphicsLayer { alpha = progress() }
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(SecondaryContainer)
+                    .drawBehind { drawRect(accent, size = Size(2.5.dp.toPx(), size.height)) },
+            )
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 11.dp)
+                    .size(38.dp)
+                    .graphicsLayer { alpha = 1f - progress() }
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SecondaryContainer)
+                    .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) },
+            )
+        }
+        // Icon glides from the open inset (10dp) to the band center (22dp left → center 30) — only
+        // the icon moves, so the active fill never shifts/bleeds past the rail edge.
         Icon(
             icon,
             contentDescription = label,
             tint = if (active) accent else OnSurfaceVariant,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .size(16.dp)
+                .offset { IntOffset(androidx.compose.ui.util.lerp(22.dp.toPx(), 10.dp.toPx(), progress()).roundToInt(), 0) },
         )
-        Spacer(Modifier.width(10.dp))
         Text(
             text = label,
             fontSize = 13.5.sp,
@@ -584,7 +595,10 @@ private fun NavRow(
             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
             softWrap = false,
-            modifier = Modifier.graphicsLayer { alpha = progress() },
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 36.dp)
+                .graphicsLayer { alpha = progress() },
         )
     }
 }

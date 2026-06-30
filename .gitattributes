@@ -1,0 +1,7 @@
+# Design mockups & exported HTML are not source code — exclude them from
+# GitHub's language stats (Linguist sums file bytes by language, and the
+# large standalone design exports otherwise dominate the language bar).
+design/**/*.html       linguist-documentation
+docs/design/**/*.html  linguist-documentation
+**/docs/design/**/*.html linguist-documentation
+*.standalone.html      linguist-documentation

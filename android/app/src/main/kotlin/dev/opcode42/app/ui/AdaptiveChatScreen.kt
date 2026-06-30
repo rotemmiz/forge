@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -405,17 +404,18 @@ internal fun NavRailPane(
     // Flip the header's interactivity once at the midpoint (alpha=0 still hit-tests).
     val open by remember { derivedStateOf { progress() > 0.5f } }
     Column(modifier.fillMaxSize().background(SurfaceContainerLow)) {
-        // Header: crossfade the open header (wordmark + New + collapse) with a centered expand
-        // chevron. The open chrome interacts only when `open`, the chevron only when collapsed.
+        // Header: the wordmark + New fade out as the rail collapses, leaving a single chevron that
+        // rotates 180° (collapse "‹" ⇄ expand "›") and slides from the open right edge to the
+        // collapsed center.
         Box(Modifier.fillMaxWidth().height(54.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     // Front-load the fade (gone by progress≈0.4) so the wordmark + New never
-                    // visibly squeeze as the rail narrows.
+                    // visibly squeeze as the rail narrows. End padding leaves room for the chevron.
                     .graphicsLayer { alpha = ((progress() - 0.4f) * 2.5f).coerceIn(0f, 1f) }
-                    .padding(start = 14.dp, end = 6.dp),
+                    .padding(start = 14.dp, end = 50.dp),
             ) {
                 Text(
                     text = "opcode42",
@@ -442,32 +442,23 @@ internal fun NavRailPane(
                     Spacer(Modifier.width(4.dp))
                     Text("New", fontSize = 12.5.sp, color = OnSurface)
                 }
-                Spacer(Modifier.width(2.dp))
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .then(if (open) Modifier.clickable(onClick = onCollapse) else Modifier),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "Collapse navigation",
-                        tint = OnSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
             }
+            // One chevron, always present + interactive. Slides open-right (174dp) → collapsed-center
+            // (10dp, so the 40dp box centers in the 60dp band) and rotates 180° so "‹" becomes "›".
             Box(
                 Modifier
-                    .align(Alignment.Center)
+                    .align(Alignment.CenterStart)
+                    .offset {
+                        IntOffset(androidx.compose.ui.util.lerp(10.dp.toPx(), 174.dp.toPx(), progress()).roundToInt(), 0)
+                    }
                     .size(40.dp)
-                    .graphicsLayer { alpha = 1f - progress() }
-                    .then(if (!open) Modifier.clickable(onClick = onExpand) else Modifier),
+                    .clickable { if (progress() > 0.5f) onCollapse() else onExpand() }
+                    .graphicsLayer { rotationZ = (1f - progress()) * 180f },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Expand navigation",
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = if (open) "Collapse navigation" else "Expand navigation",
                     tint = OnSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -517,6 +508,8 @@ internal fun NavRailPane(
             ) {
                 Box(
                     Modifier
+                        // Glide to the band center as the rail collapses (path fades, dot centers).
+                        .offset { IntOffset(androidx.compose.ui.util.lerp(17.dp.toPx(), 0f, progress()).roundToInt(), 0) }
                         .size(6.dp)
                         .clip(CircleShape)
                         .background(Tertiary),
@@ -537,8 +530,8 @@ internal fun NavRailPane(
     }
 }
 
-/** A full-width Conversation / Tasks nav row; the label fades and the icon glides to centered
- *  in the 60dp band as the rail collapses ([progress] 1f→0f). */
+/** A full-width Conversation / Tasks nav row. The icon is STATIC at the band-center inset (so it's
+ *  already centered when the rail collapses to 60dp); only the label fades as [progress] 1f→0f. */
 @Composable
 private fun NavRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -554,8 +547,8 @@ private fun NavRow(
             .height(40.dp)
             .clickable(onClick = onClick),
     ) {
-        // Active highlight morphs (like the session rows): a full-width pill when open (fades out)
-        // and a 38dp square at inset 11 — centered in the 60dp band — when collapsed (fades in).
+        // Active highlight morphs: a full-width pill when open (fades out) and a 38dp square at
+        // inset 11 — centered in the 60dp band — when collapsed (fades in).
         if (active) {
             Box(
                 Modifier
@@ -577,16 +570,16 @@ private fun NavRow(
                     .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) },
             )
         }
-        // Icon glides from the open inset (10dp) to the band center (22dp left → center 30) — only
-        // the icon moves, so the active fill never shifts/bleeds past the rail edge.
+        // Static at inset 22: a 16dp icon there spans 22–38, centered (30) in the 60dp band, so it
+        // never moves as the rail retracts — only the label collapses away.
         Icon(
             icon,
             contentDescription = label,
             tint = if (active) accent else OnSurfaceVariant,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .size(16.dp)
-                .offset { IntOffset(androidx.compose.ui.util.lerp(22.dp.toPx(), 10.dp.toPx(), progress()).roundToInt(), 0) },
+                .padding(start = 22.dp)
+                .size(16.dp),
         )
         Text(
             text = label,
@@ -597,7 +590,7 @@ private fun NavRow(
             softWrap = false,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .padding(start = 36.dp)
+                .padding(start = 44.dp)
                 .graphicsLayer { alpha = progress() },
         )
     }

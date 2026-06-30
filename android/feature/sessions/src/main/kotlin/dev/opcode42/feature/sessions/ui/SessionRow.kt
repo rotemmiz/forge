@@ -221,25 +221,22 @@ private fun CompactRailRow(
                         .drawBehind { drawRect(accent, size = Size(2.5.dp.toPx(), size.height)) },
                 )
             }
-            // (2) Avatar — the PERSISTENT anchor (always visible, never fades), left-pinned so it
-            //     sits at the row's left when open and lands centered in the 60dp band when
-            //     collapsed (RailLeftInset == (60−38)/2). Like the Conversation row's icon: the row
-            //     collapses around it rather than crossfading into it.
+            // (2) Letter — the COLLAPSED form of the row. The expanded view shows only the title
+            //     (no leading avatar to waste space); on collapse the title fades out (below) and
+            //     this single letter fades in, centered in the 60dp band (RailLeftInset == (60−38)/2).
+            //     Active rows get the amber square; idle rows are a bare letter.
             Box(
                 Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = RailLeftInset)
                     .size(AvatarSize)
+                    .graphicsLayer { alpha = 1f - progress() }
                     .clip(RoundedCornerShape(8.dp))
                     .then(
                         if (isActive) {
                             Modifier
                                 .background(SecondaryContainer)
-                                // The avatar's own accent fades IN only as the full-row pill fades
-                                // out, so the two accents never double up while open.
-                                .drawBehind {
-                                    drawRect(accent, size = Size(2.dp.toPx(), size.height), alpha = 1f - progress())
-                                }
+                                .drawBehind { drawRect(accent, size = Size(2.dp.toPx(), size.height)) }
                         } else {
                             Modifier
                         },
@@ -254,13 +251,13 @@ private fun CompactRailRow(
                     color = if (isActive) OnSurface else OnSurfaceVariant,
                 )
             }
-            // (3) Open content — title + status/`time · workdir` meta, sitting to the RIGHT of the
-            //     persistent avatar; it fades + retracts on collapse (the label that goes away).
+            // (3) Open content — title + status/`time · workdir` meta, using the full width from the
+            //     left (no avatar indent); it fades out on collapse as the letter fades in.
             Column(
                 Modifier
                     .align(Alignment.CenterStart)
                     .fillMaxWidth()
-                    .padding(start = RailLeftInset + AvatarSize + 10.dp, end = if (busy) 30.dp else 12.dp)
+                    .padding(start = 12.dp, end = if (busy) 30.dp else 12.dp)
                     .graphicsLayer { alpha = progress() },
             ) {
                 Text(

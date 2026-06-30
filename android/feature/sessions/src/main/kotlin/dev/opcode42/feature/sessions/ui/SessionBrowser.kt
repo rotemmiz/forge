@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,11 +47,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.util.lerp
-import kotlin.math.roundToInt
 import dev.opcode42.core.design.theme.Hairline
 import dev.opcode42.core.design.theme.HeaderPurple
 import dev.opcode42.core.design.theme.OnSurface
@@ -216,17 +212,15 @@ private fun SessionSearchField(
             .background(SurfaceContainer)
             .border(1.dp, Hairline, shape)
             .then(if (!open) Modifier.clickable(onClick = onExpand) else Modifier)
-            .padding(horizontal = 11.dp),
+            // Compact: start inset 14 puts the icon at rail-x 22 → centered in the 60dp band, so it
+            // sits dead-center when collapsed and stays put (no glide) as the rail retracts.
+            .padding(start = if (compact) 14.dp else 11.dp, end = 11.dp),
     ) {
         Icon(
             Icons.Default.Search,
             contentDescription = null,
             tint = OnSurfaceFaint,
-            modifier = Modifier
-                .size(if (compact) 16.dp else 18.dp)
-                // Nudge the icon to the center of the collapsed search dot (it sits 3dp left of
-                // center at the box's 11dp inset); a no-op when open (progress = 1).
-                .offset { IntOffset(lerp(3.dp.toPx(), 0f, progress()).roundToInt(), 0) },
+            modifier = Modifier.size(if (compact) 16.dp else 18.dp),
         )
         Spacer(Modifier.width(9.dp))
         Box(
@@ -313,6 +307,10 @@ private fun SectionHeader(
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.6.sp,
         color = HeaderPurple,
+        // Keep a single line so the header's height never grows (and pushes the rows down) as the
+        // rail narrows past the label's width — it just clips while fading out.
+        maxLines = 1,
+        softWrap = false,
     )
 }
 

@@ -53,32 +53,59 @@ data class ChatLayout(
     val singlePane: Boolean,
     /** The right session-info panel is shown persistently ("always available"). */
     val showRightPanel: Boolean,
-    /** Presentation of the collapsible left sessions menu (always closed by default). */
+    /** Presentation of the collapsible left sessions menu. */
     val leftRailMode: LeftRailMode,
+    /** Expanded width: the rail is open by default (the full triptych), not closed. */
+    val railPersistent: Boolean,
 )
 
+/** The three standard width tiers — Material `WindowWidthSizeClass` breakpoints (600/840dp). */
+enum class ChatPaneTier { Compact, Medium, Expanded }
+
+internal fun chatPaneTier(width: WindowWidthSizeClass): ChatPaneTier = when (width) {
+    WindowWidthSizeClass.COMPACT -> ChatPaneTier.Compact
+    WindowWidthSizeClass.MEDIUM -> ChatPaneTier.Medium
+    else -> ChatPaneTier.Expanded
+}
+
 /**
- * Derive the chat layout from the window's width (height is taken for future
- * height-aware tuning, e.g. relaxing the right panel on a cramped phone-landscape).
+ * Derive the chat layout from the window's **width size class** — the standard Material
+ * `WindowWidthSizeClass` (canonical 600/840dp breakpoints), so split-screen, freeform,
+ * DeX and desktop windows all re-evaluate the same rule.
  *
- * One rule keyed on width: a **compact-width** window (phone portrait, folded cover
- * display, narrow split-screen) is single-pane with an **overlay** sessions drawer
- * and no right panel; any **wider** window (phone landscape, foldable, tablet — either
- * orientation) shows the persistent right info panel with an **inline-push**,
- * collapsible left rail. The left menu is closed by default in every case.
- *
- * Because we key off the *window* size class (not the physical device), split-screen,
- * freeform, DeX and desktop windows re-evaluate the same rule automatically.
+ * Three tiers:
+ *  - **Compact** (<600dp — phone portrait, folded cover, narrow split): single pane,
+ *    **overlay** sessions drawer, no right panel.
+ *  - **Medium** (600–839dp — foldable, tablet portrait, large-phone landscape): chat +
+ *    persistent right info panel, with an **inline-push** rail closed by default.
+ *  - **Expanded** (≥840dp — tablet landscape, unfolded foldable, desktop): the full
+ *    **triptych** — rail open by default and persistent, alongside chat + right panel —
+ *    except on a short (Compact-height) window (large phone in landscape), where the
+ *    rail stays closed so three panes don't crowd a shallow viewport.
  */
 internal fun chatLayoutFor(
     width: WindowWidthSizeClass,
-    @Suppress("UNUSED_PARAMETER") height: WindowHeightSizeClass,
-): ChatLayout {
-    val compactWidth = width == WindowWidthSizeClass.COMPACT
-    return ChatLayout(
-        singlePane = compactWidth,
-        showRightPanel = !compactWidth,
-        leftRailMode = if (compactWidth) LeftRailMode.Overlay else LeftRailMode.InlinePush,
+    height: WindowHeightSizeClass,
+): ChatLayout = when (chatPaneTier(width)) {
+    ChatPaneTier.Compact -> ChatLayout(
+        singlePane = true,
+        showRightPanel = false,
+        leftRailMode = LeftRailMode.Overlay,
+        railPersistent = false,
+    )
+    ChatPaneTier.Medium -> ChatLayout(
+        singlePane = false,
+        showRightPanel = true,
+        leftRailMode = LeftRailMode.InlinePush,
+        railPersistent = false,
+    )
+    ChatPaneTier.Expanded -> ChatLayout(
+        singlePane = false,
+        showRightPanel = true,
+        leftRailMode = LeftRailMode.InlinePush,
+        // Persistent triptych only when there's vertical room; a short Expanded-width
+        // window (large phone in landscape) keeps the rail closed by default.
+        railPersistent = height != WindowHeightSizeClass.COMPACT,
     )
 }
 
@@ -133,11 +160,12 @@ fun AdaptiveChatScreen(
 
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    // Inline-push rail visibility. Closed by default; re-keyed on layout so a change in
-    // layout (e.g. fold/unfold across the compact boundary) resets it to closed rather
-    // than reopening with stale state. The effect closes the overlay drawer on the same
-    // change so it never lingers when the layout switches out of overlay mode.
-    var railOpen by remember(layout) { mutableStateOf(false) }
+    // Inline-push rail visibility. Open by default at Expanded width (the persistent
+    // triptych), closed otherwise; re-keyed on layout so a change (e.g. fold/unfold or a
+    // rotation across a breakpoint) resets to the tier's default rather than reopening
+    // with stale state. The effect closes the overlay drawer on the same change so it
+    // never lingers when the layout switches out of overlay mode.
+    var railOpen by remember(layout) { mutableStateOf(layout.railPersistent) }
     LaunchedEffect(layout) {
         if (drawerState.isOpen) drawerState.close()
     }

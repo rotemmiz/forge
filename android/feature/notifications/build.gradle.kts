@@ -1,19 +1,10 @@
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
-    alias(libs.plugins.hilt)
+    id("opcode42.android.library")
+    id("opcode42.android.hilt")
 }
 
 android {
     namespace = "dev.opcode42.feature.notifications"
-    compileSdk = 35
-    defaultConfig { minSdk = 26 }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions { jvmTarget = "17" }
     testOptions {
         // PushRegistrar logs via android.util.Log; return defaults so JVM unit
         // tests don't hit the un-mocked-method RuntimeException.
@@ -27,8 +18,6 @@ dependencies {
     implementation(libs.android.core.ktx)
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.hilt.android)
-    kapt(libs.hilt.android.compiler)
 
     // Firebase Cloud Messaging. The google-services Gradle plugin is intentionally
     // NOT applied (it would require a checked-in google-services.json at build

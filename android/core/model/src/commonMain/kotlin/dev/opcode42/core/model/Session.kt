@@ -31,13 +31,15 @@ data class TokenUsage(
     val total: Double? = null,
 ) {
     /**
-     * Context-window occupancy for THIS turn — mirrors the daemon's compaction
-     * accounting (overflow.go totalTokens): prefer the reported [total], else
-     * input + output + cache (reasoning excluded, since some providers fold it
-     * into output). Drives the live context gauge.
+     * Context-window occupancy for THIS turn — mirrors opencode's context gauge
+     * (tui sidebar/context.tsx:28-31, prompt/index.tsx:266-268): the sum of
+     * input + output + reasoning + cache. The wire's session-level [total] is
+     * deliberately ignored here — it tracks lifetime usage, not this turn's
+     * footprint. (The daemon's compaction check is what prefers [total]; that's a
+     * separate numerator, server-side in overflow.go.) Drives the live context gauge.
      */
     val contextFootprint: Long
-        get() = (total?.takeIf { it > 0.0 } ?: (input + output + cache.read + cache.write)).toLong()
+        get() = (input + output + reasoning + cache.read + cache.write).toLong()
 }
 
 @Serializable

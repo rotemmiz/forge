@@ -303,6 +303,7 @@ fun AdaptiveChatScreen(
                 modelID = chatUiState.modelID,
                 providerID = chatUiState.providerID,
                 tokens = chatUiState.contextTokens,
+                contextLimit = chatUiState.contextLimit,
                 todos = chatUiState.todos,
                 diffs = aggregatedDiffs,
                 commands = chatCommands,
@@ -630,6 +631,7 @@ internal fun SessionInfoPanel(
     modelID: String?,
     providerID: String?,
     tokens: TokenUsage?,
+    contextLimit: Int? = null,
     todos: List<TodoItem>,
     diffs: List<SnapshotFileDiff> = emptyList(),
     commands: List<CommandInfo> = emptyList(),
@@ -680,29 +682,43 @@ internal fun SessionInfoPanel(
 
         if (tokens != null) {
             val used = tokens.contextFootprint
-            val fraction = (used.toFloat() / 200_000L).coerceIn(0f, 1f)
+            // Divide by the model's real context window (opencode prompt/index.tsx:267).
+            // The ratio is left uncapped so the % label can read e.g. 105% right before the
+            // daemon compacts — opencode shows the same; only the bar fill is clamped. A null
+            // limit (model absent from the models.dev catalog) → no denominator and no
+            // percentage, matching opencode's `pct = undefined` path (prompt/index.tsx:268).
+            // contextLimit is already null-or-positive (resolved in the ViewModel).
+            val limit = contextLimit
+            val ratio = limit?.let { used.toFloat() / it }
+            val barFill = ratio?.coerceIn(0f, 1f)
             SbSection("CONTEXT") {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f)) {
                         Text(formatTokens(used), fontFamily = Opcode42Mono, fontSize = 12.5.sp, color = OnSurface)
-                        Text(" / 200K", fontFamily = Opcode42Mono, fontSize = 12.5.sp, color = OnSurfaceFaint)
+                        if (limit != null) {
+                            Text(" / ${formatTokens(limit.toLong())}", fontFamily = Opcode42Mono, fontSize = 12.5.sp, color = OnSurfaceFaint)
+                        }
                     }
-                    Text(
-                        text = "${(fraction * 100).toInt()}%",
-                        fontFamily = Opcode42Mono,
-                        fontSize = 12.5.sp,
-                        color = Primary,
-                    )
+                    if (ratio != null) {
+                        Text(
+                            text = "${(ratio * 100).roundToInt()}%",
+                            fontFamily = Opcode42Mono,
+                            fontSize = 12.5.sp,
+                            color = Primary,
+                        )
+                    }
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(SurfaceContainerHighest),
-                ) {
-                    Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Primary))
+                if (barFill != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(SurfaceContainerHighest),
+                    ) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(barFill).background(Primary))
+                    }
                 }
                 val cost = session?.cost
                 if (cost != null && cost > 0.0) {

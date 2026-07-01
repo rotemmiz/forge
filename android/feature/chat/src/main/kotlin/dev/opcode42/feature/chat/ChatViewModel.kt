@@ -10,6 +10,7 @@ import dev.opcode42.core.data.toUserMessage
 import dev.opcode42.core.model.*
 import dev.opcode42.core.store.ConnectionState
 import dev.opcode42.core.store.OptimisticMessage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -155,7 +156,11 @@ class ChatViewModel @Inject constructor(
                 isLoading = loading,
                 isSending = sending,
             )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+        }
+            // Run the combine transform (esp. extractTodos' O(messages·parts) JSON scan) off the
+            // main thread — it fires on every SSE delta while a turn streams.
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     private val directory: String? get() = uiState.value.session?.directory
 

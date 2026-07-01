@@ -39,6 +39,8 @@ private sealed class MdBlock {
 }
 
 private val TableSeparator = Regex("""^\|?[\s:|-]*-[\s:|-]*\|?$""")
+// Top-level so the pattern compiles once, not twice per matching line on every parse.
+private val OrderedListItem = Regex("""^(\d+)\.\s+(.+)""")
 
 private fun splitTableRow(line: String): List<String> =
     line.trim().trim('|').split('|').map { it.trim() }
@@ -97,8 +99,8 @@ private fun parse(markdown: String): List<MdBlock> {
             // Divider
             trimmed == "---" || trimmed == "***" || trimmed == "___" -> { flushPara(); blocks += MdBlock.Divider }
             // Ordered list item
-            Regex("""^(\d+)\.\s+(.+)""").matches(trimmed) -> {
-                val m = Regex("""^(\d+)\.\s+(.+)""").find(trimmed)!!
+            OrderedListItem.matches(trimmed) -> {
+                val m = OrderedListItem.find(trimmed)!!
                 flushPara()
                 blocks += MdBlock.ListItem(m.groupValues[1].toIntOrNull(), m.groupValues[2])
             }
@@ -201,7 +203,9 @@ internal fun buildInlineSpans(
 
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier) {
-    val blocks = parse(text)
+    // Memoize the parse: during streaming the parent recomposes on every SSE delta, and
+    // re-parsing unchanged text parts each time is a hot-path allocation/CPU sink.
+    val blocks = remember(text) { parse(text) }
     Column(modifier = modifier) {
         for (block in blocks) {
             when (block) {

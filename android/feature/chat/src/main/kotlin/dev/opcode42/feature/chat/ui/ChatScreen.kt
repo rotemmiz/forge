@@ -4,6 +4,9 @@ import dev.opcode42.core.design.theme.*
 import dev.opcode42.core.design.brand.AsteriskMark
 import dev.opcode42.core.design.brand.Spinner
 
+import android.os.SystemClock
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -29,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -53,6 +57,7 @@ import dev.opcode42.feature.chat.commands.ChatCommandActions
 import dev.opcode42.feature.chat.commands.PaletteEntry
 import dev.opcode42.feature.chat.commands.buildPaletteEntries
 import dev.opcode42.feature.chat.commands.builtinCommands
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -403,6 +408,48 @@ fun ChatScreen(
             // chat area only (the rail lives outside, beside the chat, so the bar stops at
             // the rail's edge). Single-pane: this Row holds just the stream column.
             Column(Modifier.weight(1f).fillMaxHeight()) {
+                // Splash ⇄ content is an instant swap (no cross-fade). The splash is both the
+                // draft/idle prompt and the loading spinner — one centered view, so the logo
+                // never moves between them.
+                //
+                // When to raise it:
+                //  • From the empty/idle page (splash already up) or the draft prompt → immediately;
+                //    the logo just starts spinning, there's nothing on screen to flash over.
+                //  • Between pages (a conversation already shown) → only if the load is STILL
+                //    running after LOADER_DELAY_MS, so a fast/cached switch never flashes a loader.
+                // Once the loader *newly* appears it stays for at least MIN_LOADER_MS, so a load that
+                // finishes just past the show-threshold can't blink it in and straight back out.
+                // (`splashShownAt` is only stamped on that appearance, so the empty-page splash —
+                // already on screen — still hides the instant content is ready, no forced hold.)
+                val wantSplash = uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty() &&
+                    (isDraft || uiState.isLoading)
+                // Start hidden for a real session (it remounts fresh on every switch, already
+                // isLoading=true — seeding it visible would skip the debounce and flash). Only the
+                // draft/idle prompt seeds visible, so its logo shows with no first-frame blank.
+                var splashVisible by remember { mutableStateOf(isDraft) }
+                var splashShownAt by remember { mutableStateOf(0L) }
+                LaunchedEffect(wantSplash) {
+                    if (wantSplash) {
+                        if (!splashVisible) {
+                            if (!isDraft) delay(LOADER_DELAY_MS)
+                            splashShownAt = SystemClock.elapsedRealtime()
+                            splashVisible = true
+                        }
+                    } else {
+                        val shownFor = SystemClock.elapsedRealtime() - splashShownAt
+                        if (splashVisible && shownFor < MIN_LOADER_MS) delay(MIN_LOADER_MS - shownFor)
+                        splashVisible = false
+                    }
+                }
+                // Loader ⇄ chat crossfade. On the fast path the loader never shows, so this stays
+                // pinned at 0 and never animates → content is instant. When the loader *was* up it
+                // rises to 1 and eases back to 0, giving a quick sleek fade between the two.
+                val splashAlpha by animateFloatAsState(
+                    targetValue = if (splashVisible) 1f else 0f,
+                    animationSpec = tween(FADE_MS),
+                    label = "splashAlpha",
+                )
+
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = listState,
@@ -413,6 +460,7 @@ fun ChatScreen(
                             .fillMaxWidth()
                             .widthIn(max = 720.dp) // tablet: cap + center the stream
                             .align(Alignment.TopCenter)
+                            .graphicsLayer { alpha = 1f - splashAlpha } // crossfade under the loader
                             .nestedScroll(autoScrollConnection),
                         // NOTE: no imeNestedScroll() — on a reverseLayout list it applies an
                         // inverted IME offset for one frame on every scroll, so the stream visibly
@@ -461,29 +509,19 @@ fun ChatScreen(
                         }
                     }
 
-                    // Initial message load: entering a session before anything has streamed in.
-                    if (uiState.isLoading && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
-                        Spinner(
-                            modifier = Modifier.align(Alignment.Center),
-                            color = Secondary,
-                        )
-                    }
-
-                    // New-session splash: the dual-arc mark + prompt until the first message lands.
-                    if (isDraft && !uiState.isLoading && uiState.messages.isEmpty() && uiState.optimisticMessages.isEmpty()) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        ) {
-                            AsteriskMark(size = 132.dp, color = OnSurface)
-                            Spacer(Modifier.height(22.dp))
-                            Text(
-                                text = "What should we build?",
-                                fontSize = 14.sp,
-                                color = OnSurfaceVariant,
-                            )
-                        }
-                    }
+                    // Idle / loading splash: the brand mark over "What should we build?", as a
+                    // single centered view for both the new-session idle state and while a
+                    // session's history loads — one layout so the logo never jumps between the
+                    // two. The mark spins while loading, then the whole splash alphas out as the
+                    // conversation is revealed beneath it.
+                    SessionSplash(
+                        // Spin whenever it's up as a loader (incl. the min-hold after data lands),
+                        // static for the draft prompt. Crossfaded via alpha over the stream.
+                        spinning = splashVisible && !isDraft,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .graphicsLayer { alpha = splashAlpha },
+                    )
 
                     // Todos dock — only in single/medium pane; moves to info panel in expanded.
                     if (showTodoSheet) {
@@ -757,6 +795,41 @@ private fun OptimisticMessageBlock(opt: OptimisticMessage) {
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(1.dp),
             color = Primary,
             trackColor = Hairline,
+        )
+    }
+}
+
+/** How long a *between-pages* session load must linger before the spinner appears — a fast/
+ *  cached switch resolves first, so the loader never flashes for it. Loading from the empty
+ *  page shows it immediately (the splash is already on screen). */
+private const val LOADER_DELAY_MS = 250L
+
+/** Once the loader has appeared, keep it up for at least this long, so a load finishing just
+ *  past [LOADER_DELAY_MS] doesn't blink the spinner in and straight back out. */
+private const val MIN_LOADER_MS = 450L
+
+/** Loader ⇄ chat crossfade duration — quick and sleek. Only runs when the loader was shown
+ *  (on the fast path the crossfade value never leaves 0, so content stays instant). */
+private const val FADE_MS = 200
+
+/**
+ * The idle / loading splash — the brand mark over the "What should we build?" prompt, as one
+ * centered view shared by the new-session idle state and the history-loading state, so the logo
+ * sits in the exact same spot in both (no jump). The mark [spinning]s while a session loads.
+ * Shown/hidden by the caller as a plain instant swap (no cross-fade).
+ */
+@Composable
+private fun SessionSplash(spinning: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.padding(24.dp),
+    ) {
+        AsteriskMark(size = 132.dp, color = OnSurface, spin = spinning)
+        Spacer(Modifier.height(22.dp))
+        Text(
+            text = "What should we build?",
+            fontSize = 14.sp,
+            color = OnSurfaceVariant,
         )
     }
 }

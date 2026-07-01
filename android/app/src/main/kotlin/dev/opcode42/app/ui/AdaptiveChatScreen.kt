@@ -61,7 +61,6 @@ import dev.opcode42.feature.chat.TodoItem
 import dev.opcode42.feature.chat.ui.*
 import dev.opcode42.feature.sessions.SessionFilter
 import dev.opcode42.feature.sessions.relativeTime
-import dev.opcode42.core.design.text.homeRelativeDir
 import dev.opcode42.feature.sessions.SessionListEvent
 import dev.opcode42.feature.sessions.SessionListUiState
 import dev.opcode42.feature.sessions.SessionListViewModel
@@ -246,7 +245,6 @@ fun AdaptiveChatScreen(
             NavRailPane(
                 uiState = sessionListState,
                 activeSessionId = sessionId,
-                activeDirectory = chatUiState.session?.directory,
                 onSelectSession = { id -> onSelect(); onNavigateToSession(id) },
                 onNewSession = {
                     onSelect()
@@ -409,7 +407,6 @@ private fun Modifier.railWidth(progress: () -> Float): Modifier = layout { measu
 internal fun NavRailPane(
     uiState: SessionListUiState,
     activeSessionId: String,
-    activeDirectory: String?,
     onSelectSession: (String) -> Unit,
     onNewSession: () -> Unit,
     onOpenTasksBoard: () -> Unit,
@@ -528,9 +525,9 @@ internal fun NavRailPane(
             modifier = Modifier.weight(1f),
         )
 
-        // Persistent footer: a green "connected" dot + the `~`-relative workdir. Always shown
-        // (even on a draft with no session yet) so the rail keeps its status line — falls back to
-        // a bare "~" when there's no active directory.
+        // Persistent footer: a green "connected" dot + the active server (host:port). The dot is a
+        // connection indicator, so it pairs with the server identity, not a per-session path (the
+        // working directory already shows in the chat header). Falls back to "No server" when unset.
         HorizontalDivider(color = Hairline, thickness = 1.dp)
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -548,10 +545,10 @@ internal fun NavRailPane(
                     .background(Tertiary),
             )
             Spacer(Modifier.width(6.dp))
-            // `~`-relative daemon-host path; start-ellipsized so the leaf dir survives a narrow
-            // rail (…/git/opcode42). Fades out as the rail collapses.
+            // Active server host:port; start-ellipsized so the port survives a narrow rail
+            // (…example.com:4096). Fades out as the rail collapses.
             StartEllipsisText(
-                text = homeRelativeDir(activeDirectory).ifEmpty { "~" },
+                text = uiState.serverLabel ?: "No server",
                 style = TextStyle(fontFamily = Opcode42Mono, fontSize = 11.sp, color = OnSurfaceFaint),
                 modifier = Modifier
                     .weight(1f)

@@ -58,7 +58,13 @@ data class SessionListUiState(
     val pendingQuestions: Map<String, QuestionRequest> = emptyMap(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** Active server host:port (scheme stripped) for the rail footer, e.g. "10.0.2.2:4096". */
+    val serverLabel: String? = null,
 )
+
+/** Host:port label for the rail footer — the active server URL minus its scheme and trailing
+ *  slash (e.g. "http://10.0.2.2:4096" → "10.0.2.2:4096"). */
+internal fun serverLabelFrom(url: String): String = url.substringAfter("://").trimEnd('/')
 
 /** Transient refresh status merged into [SessionListUiState] (kept off the store-derived path). */
 private data class ListStatus(val isLoading: Boolean = false, val error: String? = null)
@@ -180,6 +186,8 @@ class SessionListViewModel @Inject constructor(
             projectSessionList(inputs, showArchived, query, filter)
         }.combine(_status) { projected, status ->
             projected.copy(isLoading = status.isLoading, error = status.error)
+        }.combine(connectionProvider.activeFlow) { projected, active ->
+            projected.copy(serverLabel = active?.url?.let(::serverLabelFrom))
         }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionListUiState())
 

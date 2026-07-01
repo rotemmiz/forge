@@ -263,6 +263,11 @@ fun PromptInput(
         val canSend = enabled && (text.isNotBlank() || pendingAttachments.isNotEmpty())
         val rail = Primary
         val shape = RoundedCornerShape(14.dp)
+        // Read the @Composable theme colors here, then remember the transformation keyed on them,
+        // so it isn't re-allocated on every keystroke recomposition (only if a color changes).
+        val accent = Secondary
+        val mention = LinkCyan
+        val composerTransform = remember(accent, mention) { composerTokenTransformation(accent, mention) }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -282,7 +287,7 @@ fun PromptInput(
                     fontSize = 13.5.sp,
                 ),
                 cursorBrush = SolidColor(Primary),
-                visualTransformation = composerTokenTransformation(Secondary, LinkCyan),
+                visualTransformation = composerTransform,
                 modifier = Modifier
                     .weight(1f)
                     .padding(end = 4.dp, top = 13.dp, bottom = 13.dp),
@@ -649,6 +654,8 @@ private fun SourcePill(source: String) {
     )
 }
 
+private val MentionToken = Regex("""@\S+""")
+
 /** Colors a leading `/command` [accent] and any `@mention` [mention] (length-preserving). */
 private fun composerTokenTransformation(accent: Color, mention: Color) = VisualTransformation { original ->
     val str = original.text
@@ -658,7 +665,7 @@ private fun composerTokenTransformation(accent: Color, mention: Color) = VisualT
             val end = str.indexOf(' ').let { if (it == -1) str.length else it }
             addStyle(SpanStyle(color = accent), 0, end)
         }
-        Regex("""@\S+""").findAll(str).forEach { m ->
+        MentionToken.findAll(str).forEach { m ->
             addStyle(SpanStyle(color = mention), m.range.first, m.range.last + 1)
         }
     }

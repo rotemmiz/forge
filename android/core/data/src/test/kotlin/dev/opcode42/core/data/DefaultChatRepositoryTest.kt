@@ -1,5 +1,7 @@
 package dev.opcode42.core.data
 
+import dev.opcode42.core.model.AppEvent
+import dev.opcode42.core.model.TextPart
 import dev.opcode42.core.network.ActiveConnectionProvider
 import dev.opcode42.core.network.ServerConnectionConfig
 import dev.opcode42.core.network.SseEventParser
@@ -9,6 +11,7 @@ import dev.opcode42.core.sdk.HttpTransport
 import dev.opcode42.core.sdk.Opcode42Client
 import dev.opcode42.core.store.AppStore
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -70,6 +73,17 @@ class DefaultChatRepositoryTest {
 
         assertTrue(result.isFailure)
         assertTrue(store.state.value.optimisticMessages["ses1"].orEmpty().isEmpty())
+    }
+
+    @Test fun observe_projectsPartsToThisSessionOnly() = runTest {
+        // Parts for two sessions live in the same store; observe(ses1) must expose only ses1's.
+        store.dispatch(AppEvent.PartUpdated(TextPart(id = "p1", sessionID = "ses1", messageID = "m1", text = "a")))
+        store.dispatch(AppEvent.PartUpdated(TextPart(id = "p2", sessionID = "ses2", messageID = "m2", text = "b")))
+
+        val snap = repo.observe("ses1").first()
+
+        assertTrue(snap.parts.containsKey("m1"))
+        assertFalse(snap.parts.containsKey("m2"))
     }
 
     @Test fun loadDiff_isIdempotent_secondCallHitsNoNetwork() = runTest {

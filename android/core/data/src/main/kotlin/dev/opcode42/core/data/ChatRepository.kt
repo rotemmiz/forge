@@ -21,6 +21,7 @@ import dev.opcode42.core.store.OptimisticMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -98,19 +99,27 @@ class DefaultChatRepository @Inject constructor(
     private val diffInFlight = mutableSetOf<String>()
 
     override fun observe(sessionId: String): Flow<ChatSnapshot> = store.state.map { s ->
+        val messages = s.messages[sessionId] ?: emptyList()
+        // Project parts/diffs down to THIS session so an unrelated session's stream update
+        // doesn't change this snapshot — which lets distinctUntilChanged actually elide it
+        // (parts carry their own sessionID; diffs are keyed by this session's message ids).
+        // Note: a message whose live-parts bucket is emptied by PartRemoved drops out here, so
+        // effectiveParts falls back to the REST-loaded message.parts — the intended behavior.
+        val messageIds = messages.mapTo(HashSet(messages.size)) { it.id }
         ChatSnapshot(
             session = s.sessions.firstOrNull { it.id == sessionId },
-            messages = s.messages[sessionId] ?: emptyList(),
-            parts = s.parts,
+            messages = messages,
+            parts = s.parts.filterValues { it.firstOrNull()?.sessionID == sessionId },
             optimistic = s.optimisticMessages[sessionId] ?: emptyList(),
             permissions = s.permissions[sessionId] ?: emptyList(),
             questions = s.questions[sessionId] ?: emptyList(),
             status = s.sessionStatus[sessionId] ?: "idle",
-            diffs = s.diffs,
+            diffs = s.diffs.filterKeys { it in messageIds },
         )
-    }
+    }.distinctUntilChanged()
 
-    override val connectionState: Flow<ConnectionState> = store.state.map { it.connectionState }
+    override val connectionState: Flow<ConnectionState> =
+        store.state.map { it.connectionState }.distinctUntilChanged()
 
     override fun subscribeDirectory(directory: String) = sseManager.subscribeDirectory(directory)
 

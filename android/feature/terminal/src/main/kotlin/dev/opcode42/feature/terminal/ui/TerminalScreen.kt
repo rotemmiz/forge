@@ -63,8 +63,10 @@ fun TerminalScreen(
             val density = LocalDensity.current
 
             // Auto-scroll to the bottom whenever the emulator mutates (revision bumps).
+            // Snap rather than animate: revision bumps on every PTY chunk, and a fast-scrolling
+            // shell would otherwise restart the scroll animation many times per second (jank).
             LaunchedEffect(viewModel.revision) {
-                scrollState.animateScrollTo(scrollState.maxValue)
+                scrollState.scrollTo(scrollState.maxValue)
             }
 
             // Estimate visible rows/cols from the viewport and report to the daemon

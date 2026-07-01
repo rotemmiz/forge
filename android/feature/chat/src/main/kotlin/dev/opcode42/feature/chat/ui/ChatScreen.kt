@@ -424,10 +424,20 @@ fun ChatScreen(
                         // reverseLayout: emit newest-first so the freshest content is index 0 (bottom).
                         // Optimistic (just-sent, unconfirmed) messages are the newest, then the server
                         // messages newest→oldest above them.
-                        items(uiState.optimisticMessages.asReversed(), key = { "opt:${it.id}" }) { opt ->
+                        items(
+                            uiState.optimisticMessages.asReversed(),
+                            key = { "opt:${it.id}" },
+                            contentType = { "optimistic" },
+                        ) { opt ->
                             OptimisticMessageBlock(opt)
                         }
-                        items(uiState.messages.asReversed(), key = { it.id }) { message ->
+                        items(
+                            uiState.messages.asReversed(),
+                            key = { it.id },
+                            // Distinct content type per role so Compose reuses layouts within a
+                            // role band instead of across the optimistic/user/assistant boundary.
+                            contentType = { it.role },
+                        ) { message ->
                             // SSE live parts supersede REST-loaded parts when present, but
                             // PatchParts from SSE may lack the `files` list that the REST
                             // endpoint includes — fall back to the REST-loaded part in that case.

@@ -2,17 +2,11 @@ package dev.opcode42.core.data
 
 import dev.opcode42.core.model.AppEvent
 import dev.opcode42.core.model.TextPart
-import dev.opcode42.core.network.ActiveConnectionProvider
-import dev.opcode42.core.network.ServerConnectionConfig
-import dev.opcode42.core.network.SseEventParser
-import dev.opcode42.core.network.SseManager
 import dev.opcode42.core.sdk.BaseUrlProvider
 import dev.opcode42.core.sdk.HttpTransport
 import dev.opcode42.core.sdk.Opcode42Client
 import dev.opcode42.core.store.AppStore
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -27,18 +21,13 @@ import org.junit.Test
 /**
  * Tests the optimistic-send rollback and the idempotent diff fetch that moved out of
  * `ChatViewModel` into [DefaultChatRepository]. Real REST client over a [MockWebServer] + real
- * [AppStore]; the [SseManager] is constructed but never started (no method under test touches it).
+ * [AppStore].
  */
 class DefaultChatRepositoryTest {
 
     private lateinit var server: MockWebServer
     private lateinit var store: AppStore
     private lateinit var repo: DefaultChatRepository
-
-    private class NoConnection : ActiveConnectionProvider {
-        override val active: ServerConnectionConfig? = null
-        override val activeFlow: StateFlow<ServerConnectionConfig?> = MutableStateFlow(null)
-    }
 
     @Before fun setUp() {
         server = MockWebServer()
@@ -48,8 +37,7 @@ class DefaultChatRepositoryTest {
         }
         store = AppStore()
         val client = Opcode42Client(HttpTransport(OkHttpClient(), OkHttpClient(), baseUrl))
-        val sse = SseManager(OkHttpClient(), NoConnection(), store, SseEventParser())
-        repo = DefaultChatRepository(client, store, sse)
+        repo = DefaultChatRepository(client, store)
     }
 
     @After fun tearDown() { server.shutdown() }

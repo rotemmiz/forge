@@ -31,7 +31,15 @@ private const val RECONNECT_DELAY_BASE_MS = 1_000L
 private const val RECONNECT_DELAY_MAX_MS = 30_000L
 
 /**
- * Manages the SSE connection to GET /global/event.
+ * Manages the single SSE connection to GET /global/event.
+ *
+ * `/global/event` carries EVERY event across all instances — opencode forwards all EventV2
+ * events (sessions, messages, message parts + deltas, permission/question prompts) to the
+ * process-global bus (event-v2-bridge.ts; permission/index.ts publishes through the same
+ * bridge), and the handler applies no per-client filtering. So one global stream is
+ * sufficient; there is deliberately no per-directory `/event?directory=` subscription. A
+ * second stream only duplicated every frame and, by sharing the liveness clock, could mask a
+ * silently-dead global socket from the heartbeat watchdog.
  *
  * Connection loop:
  *  - Foreground: maintain live OkHttp SSE connection.
@@ -74,9 +82,7 @@ class SseManager @Inject constructor(
         })
     }
 
-    private var directoryJob: Job? = null
     private var flushJob: Job? = null
-    private var subscribedDirectory: String? = null
 
     fun start() {
         if (running.compareAndSet(false, true)) {
@@ -101,10 +107,8 @@ class SseManager @Inject constructor(
     fun stop() {
         if (running.compareAndSet(true, false)) {
             connectionJob?.cancel()
-            directoryJob?.cancel()
             flushJob?.cancel()
             connectionJob = null
-            directoryJob = null
             flushJob = null
         }
     }
@@ -114,27 +118,6 @@ class SseManager @Inject constructor(
         running.set(true)
         ensureFlushLoop()
         connectionJob = scope.launch { connectionLoop("/global/event") }
-        subscribedDirectory?.let { subscribeDirectory(it) }
-    }
-
-    /** Subscribe to per-directory SSE stream for streaming message parts (A6). */
-    fun subscribeDirectory(directory: String) {
-        if (subscribedDirectory == directory && directoryJob?.isActive == true) return
-        subscribedDirectory = directory
-        directoryJob?.cancel()
-        val encoded = java.net.URLEncoder.encode(directory, "UTF-8")
-        directoryJob = scope.launch {
-            var attempt = 0
-            while (running.get()) {
-                val baseUrl = connectionProvider.active?.url
-                if (baseUrl == null) { delay(2_000); continue }
-                connectOnce(baseUrl, "/event?directory=$encoded")
-                if (!running.get()) break
-                val backoff = min(RECONNECT_DELAY_BASE_MS * (1L shl attempt), RECONNECT_DELAY_MAX_MS)
-                attempt = (attempt + 1).coerceAtMost(5)
-                delay(backoff)
-            }
-        }
     }
 
     // ─── Connection loop ───────────────────────────────────────────────────────

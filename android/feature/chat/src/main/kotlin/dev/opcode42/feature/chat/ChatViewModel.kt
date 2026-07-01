@@ -205,11 +205,6 @@ class ChatViewModel @Inject constructor(
                 val dir = uiState.first { it.session?.directory != null }.session?.directory
                 loadPickers(dir)
             }
-            // Subscribe to per-directory SSE exactly once, when the session's directory is known
-            viewModelScope.launch {
-                val dir = uiState.first { it.session?.directory != null }.session?.directory
-                if (dir != null) chatRepo.subscribeDirectory(dir)
-            }
             // Fetch the directory's VCS branch for the header subtitle (once dir is known).
             // Best-effort: backends without /vcs (the Go daemon currently 501s) or non-repo
             // directories leave the branch unshown.
@@ -320,9 +315,6 @@ class ChatViewModel @Inject constructor(
                         emitError("create session", it)
                         return@launch
                     }
-                    // Pre-subscribe so the first streaming events aren't missed in the gap before
-                    // the real session's ChatViewModel mounts (subscribeDirectory is idempotent).
-                    created.directory?.let { chatRepo.subscribeDirectory(it) }
                     chatRepo.send(created.id, text, created.directory, attachments, _selectedModel.value, _selectedAgent.value)
                         .onFailure { emitError("send", it) }
                     _navigateToSession.trySend(created.id)

@@ -13,7 +13,6 @@ import dev.opcode42.core.model.QuestionRequest
 import dev.opcode42.core.model.Session
 import dev.opcode42.core.model.SnapshotFileDiff
 import dev.opcode42.core.model.VcsInfo
-import dev.opcode42.core.network.SseManager
 import dev.opcode42.core.sdk.Opcode42Client
 import dev.opcode42.core.store.AppStore
 import dev.opcode42.core.store.ConnectionState
@@ -50,9 +49,6 @@ interface ChatRepository {
 
     /** Global connection state — the UI reloads messages on each (re)connect. */
     val connectionState: Flow<ConnectionState>
-
-    /** Subscribe the SSE stream to a directory (idempotent in [SseManager]). */
-    fun subscribeDirectory(directory: String)
 
     suspend fun loadMessages(sessionId: String, directory: String?): Result<Unit>
 
@@ -92,7 +88,6 @@ interface ChatRepository {
 class DefaultChatRepository @Inject constructor(
     private val client: Opcode42Client,
     private val store: AppStore,
-    private val sseManager: SseManager,
 ) : ChatRepository {
 
     // Guards against duplicate in-flight diff fetches across concurrent collectors.
@@ -120,8 +115,6 @@ class DefaultChatRepository @Inject constructor(
 
     override val connectionState: Flow<ConnectionState> =
         store.state.map { it.connectionState }.distinctUntilChanged()
-
-    override fun subscribeDirectory(directory: String) = sseManager.subscribeDirectory(directory)
 
     override suspend fun loadMessages(sessionId: String, directory: String?): Result<Unit> = resultOf {
         client.getMessages(sessionId, directory).forEach { store.dispatch(AppEvent.MessageUpdated(it)) }
